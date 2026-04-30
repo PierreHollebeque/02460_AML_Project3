@@ -4,6 +4,9 @@
 import torch
 import torch.nn as nn
 import diffusion_utils, utils
+import torch.nn.functional as F
+from torch_geometric.data import Data
+
 
 class DDPM(nn.Module):
     def __init__(self, network, dataset_infos,beta_1=1e-4, beta_T=2e-2, T=100):
@@ -34,6 +37,12 @@ class DDPM(nn.Module):
         self.ydim_output = dataset_infos.output_dims['y']
         self.node_dist = dataset_infos.nodes_dist
 
+        # Stationary distributions for the discrete features, as per the user's request
+        # for the transition matrices Qt_X and Qt_E.
+        # These are the 'a_m' and 'b_m' distributions.
+        self.limit_dist_X = dataset_infos.node_dist
+        self.limit_dist_E = dataset_infos.edge_dist # Assuming this is provided
+
 
 
 
@@ -42,26 +51,6 @@ class DDPM(nn.Module):
         self.alpha = nn.Parameter(1 - self.beta, requires_grad=False)
         self.alpha_cumprod = nn.Parameter(self.alpha.cumprod(dim=0), requires_grad=False)
     
-    def negative_elbo(self, x):
-        """
-        Evaluate the DDPM negative ELBO on a batch of data.
-
-        Parameters:
-        x: [torch.Tensor]
-            A batch of data (x) of dimension `(batch_size, *)`.
-        Returns:
-        [torch.Tensor]
-            The negative ELBO of the batch of dimension `(batch_size,)`.
-        """
-        batch_size = x.shape[0]
-        # Sampling t uniformly from {0,....,T-1})
-        t = torch.randint(0, self.T, size=(batch_size, 1), device=x.device)
-        # Sampling the uniform
-        epsilon = torch.randn_like(x,device=x.device)
-        output = self.network(torch.sqrt(self.alpha_cumprod[t]) * x + torch.sqrt(1 - self.alpha_cumprod[t]) * epsilon, t.float() / self.T)
-        # Division of time by self.T in order to cap the time between 0 and 1, else time is predominating compared to images.
-        neg_elbo = torch.sum((epsilon - output) ** 2, dim=1)
-        return neg_elbo
 
     def sample(self, n_nodes, number_chain_steps=None):
         """
@@ -177,18 +166,70 @@ class DDPM(nn.Module):
 
 
 
-
-
-
-    def loss(self, x):
+    def loss(self, graph, lambda_E=1.0):
         """
-        Evaluate the DDPM loss on a batch of data.
+        Computes the loss for the DDPM.
 
-        Parameters:
-        x: [torch.Tensor]
-            A batch of data (x) of dimension `(batch_size, *)`.
-        Returns:
-        [torch.Tensor]
-            The loss for the batch.
+        Algorithm:
+        1. Input: A graph G = (X, E) with discrete features.
+        2. Sample t ~ U(1, ..., T)
+        3. Sample a noisy graph Gt ~ q(Gt | G)
+        4. The model predicts the original graph features: p_theta(G | Gt) -> (pX, pE)
+        5. The loss is the cross-entropy: lCE(pX, X) + λ * lCE(pE, E)
         """
-        return self.negative_elbo(x).mean()
+        # Assuming `graph` is an object with .X, .E, and .node_mask attributes.
+        # This is not a standard torch_geometric.data.Data object.
+        # The data loader needs to be adapted to yield such objects.
+        # X should be [bs, n_max, 1] with integer class values.
+        # E should be [bs, n_max, n_max, 1] with integer class values.
+        X_0 = graph.x.long().squeeze(-1)  # Target classes for nodes [bs, n_max]
+        E_0 = graph.E.long().squeeze(-1)  # Target classes for edges [bs, n_max, n_max]
+        node_mask = graph.node_mask
+
+        bs, n_max = X_0.shape
+
+        # 1. Sample t ~ U(0, ..., T-1)
+        t = torch.randint(0, self.T, (bs,), device=X_0.device)
+
+        # 2. Sample noisy graph Gt (corruption process)
+        alpha_bar = self.alpha_cumprod.to(X_0.device)[t]  # (bs,)
+
+        # Sample uniform noise for corruption
+        # The user specified transition matrices imply sampling from a stationary distribution
+        # for the corruption part.
+        limit_dist_X = self.limit_dist_X.to(X_0.device)
+        X_random = torch.multinomial(limit_dist_X.expand(X_0.numel(), -1), 1).view(X_0.shape)
+
+        limit_dist_E = self.limit_dist_E.to(E_0.device)
+        E_random = torch.multinomial(limit_dist_E.expand(E_0.numel(), -1), 1).view(E_0.shape)
+
+        # Create corruption masks. Where mask is True, we replace with random noise.
+        mask_X = torch.rand(X_0.shape, device=X_0.device) > alpha_bar.view(bs, 1)
+        mask_E = torch.rand(E_0.shape, device=E_0.device) > alpha_bar.view(bs, 1, 1)
+
+        X_t = torch.where(mask_X, X_random, X_0)
+        E_t = torch.where(mask_E, E_random, E_0)
+
+        # 3. & 4. Predict logits for original graph features using the network
+        # The network needs one-hot encoded features.
+        X_t_onehot = F.one_hot(X_t, num_classes=self.Xdim).float()
+        E_t_onehot = F.one_hot(E_t, num_classes=self.Edim).float()
+
+        # The network should be a graph neural network that takes (X, E, t, node_mask)
+        # and returns logits for node and edge features. The networks in `network.py`
+        # are not suitable for this task. This part requires a proper GNN.
+        pred_X_logits, pred_E_logits = self.network(X_t_onehot, E_t_onehot, t, node_mask)
+
+        # 5. Compute Cross-Entropy Loss
+        loss_X = F.cross_entropy(pred_X_logits.view(-1, self.Xdim_output), X_0.view(-1), reduction='none')
+        loss_X = (loss_X * node_mask.view(-1).float()).sum() / (node_mask.sum() + 1e-8)
+
+        # For edges, we only consider edges between existing nodes and off-diagonal.
+        edge_mask = node_mask.unsqueeze(1) * node_mask.unsqueeze(2)
+        diag_mask = ~torch.eye(n_max, device=X_0.device, dtype=torch.bool).unsqueeze(0)
+        edge_mask = edge_mask * diag_mask
+
+        loss_E = F.cross_entropy(pred_E_logits.view(-1, self.Edim_output), E_0.view(-1), reduction='none')
+        loss_E = (loss_E * edge_mask.view(-1).float()).sum() / (edge_mask.sum() + 1e-8)
+
+        return loss_X + lambda_E * loss_E

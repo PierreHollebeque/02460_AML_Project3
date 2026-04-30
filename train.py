@@ -1,5 +1,6 @@
 import torch
 from tqdm import tqdm
+from torch_geometric.data import Data
 
 def train(model, optimizer, data_loader, epochs, device, scheduler=None):
     """
@@ -26,12 +27,10 @@ def train(model, optimizer, data_loader, epochs, device, scheduler=None):
 
     for epoch in range(epochs):
         data_iter = iter(data_loader)
-        for x in data_iter:
-            if isinstance(x, (list, tuple)):
-                x = x[0]
-            x = x.to(device)
+        for graph in data_iter:
+            graph = graph.to(device)
             optimizer.zero_grad()
-            loss = model.loss(x)
+            loss = model.loss(graph)
             loss.backward()
             optimizer.step()
 

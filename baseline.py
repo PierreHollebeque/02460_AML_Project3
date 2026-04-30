@@ -70,11 +70,11 @@ if __name__ == '__main__':
     train_set, val_set, test_set = random_split(dataset, (100, 44, 44), generator=rng)
 
     # 1. Analyze training data
-    all_n, r_map, global_r = compute_empirical_distribution(train_set)
+    all_n, r_map = compute_empirical_distribution(train_set)
 
     print('MeanN : ', np.mean(all_n))
     # 2. Generate baseline graphs
-    synthetic_baseline = generate_ER_baseline(all_n, r_map, global_r, num_graphs=10)
+    synthetic_baseline = generate_ER_baseline(all_n, r_map, num_graphs=10)
 
     print(f"Generated {len(synthetic_baseline)} graphs.")
     print(f"Example Graph 0: {synthetic_baseline[0]}")

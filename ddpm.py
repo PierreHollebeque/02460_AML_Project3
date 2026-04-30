@@ -164,7 +164,12 @@ class DDPM(nn.Module):
                                     self.norm_biases, node_mask, collapse=True)
         return sampled
 
-
+    def forward(self, noisy_data, extra_data, node_mask):
+        """ Concatenates extra data to the noisy data, then calls the network. """
+        X = torch.cat((noisy_data['X_t'], extra_data.X), dim=2)
+        E = torch.cat((noisy_data['E_t'], extra_data.E), dim=3)
+        y = torch.hstack((noisy_data['y_t'], extra_data.y))
+        return self.network(X, E, y, node_mask)
 
     def loss(self, graph, lambda_E=1.0):
         """

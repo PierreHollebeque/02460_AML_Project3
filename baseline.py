@@ -56,14 +56,8 @@ def generate_ER_baseline(all_n, r_map, num_graphs, num_features=7):
     return generated_adj_matrices
 
 if __name__ == '__main__':
-    from torch_geometric.datasets import TUDataset
-    from torch.utils.data import random_split
-
-    dataset = TUDataset(root='./data/', name='MUTAG')
-    
-    # Split the dataset
-    rng = torch.Generator().manual_seed(0)
-    train_set, val_set, test_set = random_split(dataset, (100, 44, 44), generator=rng)
+    from utils import load_dataset
+    train_set, val_set, test_set = load_dataset()
 
     # 1. Analyze training data
     all_n, r_map = compute_empirical_distribution(train_set)

@@ -46,7 +46,7 @@ def generate_ER_baseline(all_n, r_map, global_r, num_graphs, num_features=7):
         # Step 1: Sample N from the empirical distribution
         n_sampled = int(np.random.choice(all_n))
         
-        # Step 2: Get the link probability r for this specific N
+        # Step 2: Get the link probability r for this specific N (global_r as a fallack)
         r_sampled = r_map.get(n_sampled, global_r)
         
         # Step 3: Sample a random graph using the Erdös-Rényi model

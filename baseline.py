@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from torch_geometric.data import Data
-from torch_geometric.utils import erdos_renyi_graph
+from torch_geometric.utils import erdos_renyi_graph, to_dense_adj
 
 def compute_empirical_distribution(train_dataset):
     '''
@@ -37,7 +37,7 @@ def generate_ER_baseline(all_n, r_map, num_graphs, num_features=7):
     '''
     Generates synthetic graphs following the 3-step baseline instructions.
     '''
-    generated_graphs = []
+    generated_adj_matrices = []
     
     for _ in range(num_graphs):
         # Step 1: Sample N from the empirical distribution
@@ -50,14 +50,10 @@ def generate_ER_baseline(all_n, r_map, num_graphs, num_features=7):
         # directed=False ensures we get a symmetric edge_index (undirected)
         edge_index = erdos_renyi_graph(n_sampled, r_sampled, directed=False)
         
-        # Create node features -> all 1
-        x = torch.ones((n_sampled, num_features)) 
+        adj = to_dense_adj(edge_index, max_num_nodes=n_sampled)[0]
+        generated_adj_matrices.append(adj)
         
-        # Build the PyG Data object
-        new_graph = Data(x=x, edge_index=edge_index)
-        generated_graphs.append(new_graph)
-        
-    return generated_graphs
+    return generated_adj_matrices
 
 if __name__ == '__main__':
     from torch_geometric.datasets import TUDataset
@@ -74,7 +70,8 @@ if __name__ == '__main__':
 
     print('MeanN : ', np.mean(all_n))
     # 2. Generate baseline graphs
-    synthetic_baseline = generate_ER_baseline(all_n, r_map, num_graphs=10)
+    adj_matrices = generate_ER_baseline(all_n, r_map, num_graphs=10)
 
-    print(f"Generated {len(synthetic_baseline)} graphs.")
-    print(f"Example Graph 0: {synthetic_baseline[0]}")
+    print(f"Generated {len(adj_matrices)} graphs.")
+    print(f"Shape of the first matrix : {adj_matrices[0].shape}")
+    print("Partial content :\n", adj_matrices[0][:5, :5]) # Plot corner 5x5

@@ -9,15 +9,11 @@ import torch
 import numpy as np
 from torch_geometric.utils import to_dense_adj
 
-def get_adjacency_matrix(graph):
-    return to_dense_adj(graph.edge_index, max_num_nodes=graph.num_nodes)[0]
 
-def node_degree(graph):
-    A = get_adjacency_matrix(graph)
+def node_degree(A):
     return torch.sum(A, dim=1)
 
-def clustering_coefficient(graph):
-    A = get_adjacency_matrix(graph)
+def clustering_coefficient(A):
 
     triangles = torch.diag(torch.matrix_power(A, 3))
 
@@ -31,50 +27,48 @@ def clustering_coefficient(graph):
     
     return cc.numpy()
 
-def eigenvector_centrality(graph):
-    A = get_adjacency_matrix(graph)
+def eigenvector_centrality(A):
     eigenvalues, eigenvectors = torch.linalg.eigh(A)
     return eigenvectors[:, np.argmax(eigenvalues)].abs().numpy()
 
+
 if __name__ == '__main__':
     # --- Setup for testing ---
-    # Create a small random graph for testing
-    from torch_geometric.utils import erdos_renyi_graph
-    from torch_geometric.data import Data
     import networkx as nx
+    from torch_geometric.utils import erdos_renyi_graph
     
     N_test = 10
     prob_test = 0.4
+    
+    # Generate an ER graph and convert it directly to an adjacency matrix
     edge_index = erdos_renyi_graph(N_test, prob_test, directed=False)
-    test_graph = Data(edge_index=edge_index, num_nodes=N_test)
+    test_adj = to_dense_adj(edge_index, max_num_nodes=N_test)[0]
     
     # --- 1. Reference calculations with NetworkX ---
-    G_nx = nx.Graph()
-    G_nx.add_nodes_from(range(N_test))
-    G_nx.add_edges_from(edge_index.t().tolist())
+    # Convert our matrix to NetworkX graph for validation
+    G_nx = nx.from_numpy_array(test_adj.numpy())
     
     ref_degree = np.array([d for _, d in G_nx.degree()])
     ref_cc = np.array(list(nx.clustering(G_nx).values()))
-    # For eigenvector, use the same absolute value logic
     ref_ev = np.array(list(nx.eigenvector_centrality(G_nx, max_iter=1000).values()))
     ref_ev = np.abs(ref_ev) 
 
-    # --- 2. Manual calculations ---
-    print("--- Running Validation Tests ---")
+    # --- 2. Validation Tests ---
+    print("--- Running Validation Tests with Adjacency Matrices ---")
     
     # Test Degree
-    my_degree = node_degree(test_graph).numpy()
+    my_degree = node_degree(test_adj).numpy()
     deg_diff = np.linalg.norm(my_degree - ref_degree)
     print(f"Degree Test: {'PASSED' if deg_diff < 1e-6 else 'FAILED'} (Diff: {deg_diff:.2e})")
     
     # Test Clustering Coefficient
-    my_cc = clustering_coefficient(test_graph)
+    my_cc = clustering_coefficient(test_adj)
     cc_diff = np.linalg.norm(my_cc - ref_cc)
     print(f"Clustering Test: {'PASSED' if cc_diff < 1e-6 else 'FAILED'} (Diff: {cc_diff:.2e})")
     
     # Test Eigenvector Centrality
-    my_ev = eigenvector_centrality(test_graph)
-    # We normalize both to compare shapes, as scale can vary by a factor
+    my_ev = eigenvector_centrality(test_adj)
+    # Normalize to compare shapes (unit length)
     my_ev_norm = my_ev / np.linalg.norm(my_ev)
     ref_ev_norm = ref_ev / np.linalg.norm(ref_ev)
     ev_diff = np.linalg.norm(my_ev_norm - ref_ev_norm)

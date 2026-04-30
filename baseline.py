@@ -30,13 +30,10 @@ def compute_empirical_distribution(train_dataset):
 
     # Compute the average r for each specific N
     r_map = {n: np.mean(rs) for n, rs in densities_per_n.items()}
-    
-    # Global average as a fallback
-    global_r = np.mean([val for sublist in densities_per_n.values() for val in sublist])
 
-    return all_n, r_map, global_r
+    return all_n, r_map
 
-def generate_ER_baseline(all_n, r_map, global_r, num_graphs, num_features=7):
+def generate_ER_baseline(all_n, r_map, num_graphs, num_features=7):
     '''
     Generates synthetic graphs following the 3-step baseline instructions.
     '''
@@ -47,7 +44,7 @@ def generate_ER_baseline(all_n, r_map, global_r, num_graphs, num_features=7):
         n_sampled = int(np.random.choice(all_n))
         
         # Step 2: Get the link probability r for this specific N (global_r as a fallack)
-        r_sampled = r_map.get(n_sampled, global_r)
+        r_sampled = r_map.get(n_sampled)
         
         # Step 3: Sample a random graph using the Erdös-Rényi model
         # directed=False ensures we get a symmetric edge_index (undirected)

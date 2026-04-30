@@ -6,6 +6,7 @@ import torch.nn as nn
 import diffusion_utils, utils
 import torch.nn.functional as F
 from torch_geometric.data import Data
+from torch_geometric.utils import to_dense_adj, to_dense_batch
 
 
 class DDPM(nn.Module):
@@ -24,9 +25,12 @@ class DDPM(nn.Module):
             The number of steps in the diffusion process.
         """
         super(DDPM, self).__init__()
+        self.device = 'cpu'
+
         self.network = network
         self.beta_1 = beta_1
         self.beta_T = beta_T
+        self._init_args = {'dataset_infos': dataset_infos, 'beta_1': beta_1, 'beta_T': beta_T, 'T': T}
         self.T = T
 
         self.Xdim = dataset_infos.input_dims['X']
@@ -35,7 +39,7 @@ class DDPM(nn.Module):
         self.Xdim_output = dataset_infos.output_dims['X']
         self.Edim_output = dataset_infos.output_dims['E']
         self.ydim_output = dataset_infos.output_dims['y']
-        self.node_dist = dataset_infos.nodes_dist
+        self.node_dist = dataset_infos.node_dist
 
         # Stationary distributions for the discrete features, as per the user's request
         # for the transition matrices Qt_X and Qt_E.
@@ -50,7 +54,43 @@ class DDPM(nn.Module):
         self.beta = nn.Parameter(torch.linspace(beta_1, beta_T, T), requires_grad=False)
         self.alpha = nn.Parameter(1 - self.beta, requires_grad=False)
         self.alpha_cumprod = nn.Parameter(self.alpha.cumprod(dim=0), requires_grad=False)
+
+        # This is log(sigma^2/alpha^2) = -log(SNR) = log( (1-alpha_cumprod) / alpha_cumprod )
+        self.gamma_schedule = nn.Parameter(torch.log(1. - self.alpha_cumprod) - torch.log(self.alpha_cumprod), requires_grad=False)
     
+    def get_init_args(self):
+        return self._init_args
+
+    def compute_extra_data(self, noisy_data):
+        """
+        Computes additional data to be concatenated with the noisy data before passing to the network.
+        In this setup, the timestep 't' is passed as a global feature.
+        """
+        bs = noisy_data['X_t'].shape[0]
+        n_max = noisy_data['X_t'].shape[1]
+        device = noisy_data['X_t'].device
+
+        # The timestep 't' from noisy_data is the global feature 'y' for the network.
+        # noisy_data['y_t'] is the noisy global feature, which is (bs, 0) in this case.
+        # The network expects a global feature of dimension self.ydim (which is 1).
+        # So, extra_data.y should be noisy_data['t'] to make the total y dimension 1.
+        return utils.PlaceHolder(
+            X=torch.empty((bs, n_max, 0), device=device),
+            E=torch.empty((bs, n_max, n_max, 0), device=device),
+            y=noisy_data['t'] # This is the timestep t_norm (bs, 1)
+        )
+
+    def gamma(self, t_normalized):
+        """
+        Computes gamma values for a given normalized time tensor.
+        t_normalized is a tensor of values in [0, 1].
+        It is used to look up the gamma value from the precomputed schedule.
+        """
+        # The schedule has T values, indexed 0 to T-1.
+        # We map t_normalized from [0, 1] to indices [0, T-1].
+        indices = (t_normalized * (self.T - 1)).round().long().clamp(0, self.T - 1)
+        return self.gamma_schedule[indices]
+
 
     def sample(self, n_nodes, number_chain_steps=None):
         """
@@ -69,7 +109,7 @@ class DDPM(nn.Module):
         batch_size = n_nodes.shape[0]
         if number_chain_steps is None:
             number_chain_steps = self.T
-        assert number_chain_steps < self.T
+        assert number_chain_steps <= self.T
 
         n_nodes_max = torch.max(n_nodes).item()
 
@@ -90,7 +130,7 @@ class DDPM(nn.Module):
         
 
         # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
-        for s_int in reversed(range(0, self.T)):
+        for s_int in reversed(range(0, number_chain_steps)):
             s_array = s_int * torch.ones((batch_size, 1)).type_as(y)
             t_array = s_array + 1
             s_norm = s_array / self.T
@@ -98,7 +138,6 @@ class DDPM(nn.Module):
 
             z_s = self.sample_p_zs_given_zt(s=s_norm, t=t_norm, X_t=X, E_t=E, y_t=y, node_mask=node_mask)
             X, E, y = z_s.X, z_s.E, z_s.y
-
 
         final_graph = self.sample_discrete_graph_given_z0(X, E, y, node_mask)
         X, E, y = final_graph.X, final_graph.E, final_graph.y
@@ -160,15 +199,17 @@ class DDPM(nn.Module):
         sampled = diffusion_utils.sample_normal(pred_X, pred_E, pred_y, sigma, node_mask).type_as(pred_X)
         assert (sampled.E == torch.transpose(sampled.E, 1, 2)).all()
 
-        sampled = utils.unnormalize(sampled.X, sampled.E, sampled.y, self.norm_values,
-                                    self.norm_biases, node_mask, collapse=True)
+        # The 'unnormalize' function is not defined and seems to be a leftover.
+        # The goal is to convert the continuous predictions to discrete class indices.
+        # The `mask` method with `collapse=True` performs this by taking argmax.
+        sampled.mask(node_mask, collapse=True)
         return sampled
 
     def forward(self, noisy_data, extra_data, node_mask):
         """ Concatenates extra data to the noisy data, then calls the network. """
         X = torch.cat((noisy_data['X_t'], extra_data.X), dim=2)
         E = torch.cat((noisy_data['E_t'], extra_data.E), dim=3)
-        y = torch.hstack((noisy_data['y_t'], extra_data.y))
+        y = torch.hstack((noisy_data['y_t'], extra_data.y)) # noisy_data['y_t'] is (bs, 0), extra_data.y is (bs, 1) -> y is (bs, 1)
         return self.network(X, E, y, node_mask)
 
     def loss(self, graph, lambda_E=1.0):
@@ -186,11 +227,17 @@ class DDPM(nn.Module):
         # This is not a standard torch_geometric.data.Data object.
         # The data loader needs to be adapted to yield such objects.
         # X should be [bs, n_max, 1] with integer class values.
-        # E should be [bs, n_max, n_max, 1] with integer class values.
-        X_0 = graph.x.long().squeeze(-1)  # Target classes for nodes [bs, n_max]
-        E_0 = graph.E.long().squeeze(-1)  # Target classes for edges [bs, n_max, n_max]
-        node_mask = graph.node_mask
+        # E should be [bs, n_max, n_max] with integer class values.
 
+        # Convert torch_geometric.data.Batch to dense tensors
+        X_0_onehot, node_mask = to_dense_batch(graph.x, batch=graph.batch)
+        X_0 = X_0_onehot.argmax(dim=-1) # [bs, n_max]
+
+        # The to_dense_adj function returns a dense adjacency matrix with edge attributes.
+        # For MUTAG, edge_attr is one-hot, so we take argmax to get class labels.
+        E_0_onehot = to_dense_adj(edge_index=graph.edge_index, batch=graph.batch, edge_attr=graph.edge_attr, max_num_nodes=X_0.shape[1])
+        E_0 = E_0_onehot.argmax(dim=-1) # [bs, n_max, n_max]
+        
         bs, n_max = X_0.shape
 
         # 1. Sample t ~ U(0, ..., T-1)
@@ -223,7 +270,11 @@ class DDPM(nn.Module):
         # The network should be a graph neural network that takes (X, E, t, node_mask)
         # and returns logits for node and edge features. The networks in `network.py`
         # are not suitable for this task. This part requires a proper GNN.
-        pred_X_logits, pred_E_logits = self.network(X_t_onehot, E_t_onehot, t, node_mask)
+
+        # Reshape and cast t for the network, which expects a float tensor for 'y'.
+        t_float = t.float().unsqueeze(-1)
+        pred = self.network(X_t_onehot, E_t_onehot, t_float, node_mask)
+        pred_X_logits, pred_E_logits = pred.X, pred.E
 
         # 5. Compute Cross-Entropy Loss
         loss_X = F.cross_entropy(pred_X_logits.view(-1, self.Xdim_output), X_0.view(-1), reduction='none')

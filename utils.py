@@ -2,9 +2,6 @@ from torch_geometric.datasets import TUDataset
 from torch.utils.data import random_split
 import torch
 import os, sys
-from ddpm import DDPM
-from network import MODEL_REGISTRY
-
 
 
 class PlaceHolder:
@@ -38,6 +35,34 @@ class PlaceHolder:
         return self
 
 
+class DummyDatasetInfos:
+    """
+    A placeholder for dataset information. It holds dimensions and distributions
+    of node, edge, and global features, compatible with the model's expectations.
+    """
+    def __init__(self, node_feature_dim: int, edge_feature_dim: int,
+                 global_feature_dim: int, node_dist: torch.Tensor,
+                 edge_dist: torch.Tensor):
+        self.node_dist = node_dist
+        self.edge_dist = edge_dist
+
+        # Input dimensions for the network
+        self.input_dims = {
+            'X': node_feature_dim,
+            'E': edge_feature_dim,
+            'y': global_feature_dim
+        }
+
+        # Output dimensions for the network (predicting noise)
+        # The global feature 'y' is used for conditioning (e.g., timestep)
+        # and is not a target for prediction in this setup.
+        self.output_dims = {
+            'X': node_feature_dim,
+            'E': edge_feature_dim,
+            'y': 0
+        }
+
+
 
 
 def load_dataset():
@@ -50,36 +75,38 @@ def load_dataset():
     return train_set, val_set, test_set
 
 def load_model(model_path: str, device: str):
+    from ddpm import DDPM
+    from network import MODEL_REGISTRY
     map_location = torch.device(device) if device != "cpu" else None
     if not os.path.exists(model_path):
         return None
 
-    saved = torch.load(model_path, map_location=map_location)
+    # In PyTorch >= 2.6, weights_only defaults to True. We set it to False
+    # because our saved model includes non-tensor objects like activation function instances.
+    # This is safe as we are loading a model we saved ourselves.
+    saved = torch.load(model_path, map_location=map_location, weights_only=False)
     model_type = saved.get("model_type")
     model_parameters = saved.get("model_parameters")
     intern_model_parameters = saved.get("intern_model_parameters")
     model_dict = saved.get("state_dict")
 
-
     print("Loading model of type", model_type,file=sys.stderr, flush=True)
     if model_type is None:
         raise ValueError("Saved model file does not contain model_type.")
 
-    intern_model = MODEL_REGISTRY.get(model_type)
-    if intern_model is None:
+    intern_model_class = MODEL_REGISTRY.get(model_type)
+    if intern_model_class is None:
         raise ValueError(f"Unknown model_type {model_type}")
-    else : 
-        intern_model = intern_model(**intern_model_parameters)
+    
+    intern_model = intern_model_class(**intern_model_parameters)
+    model = DDPM(intern_model, **model_parameters)
+    model.load_state_dict(model_dict)
 
-    intern_model.load_state_dict(model_dict)
-
-
-
-    return DDPM(intern_model, **model_parameters).to(device)
+    return model.to(device)
 
 def save_model(model, model_path: str):
     save_dict = {
-        "model_type": model.network.__name__,
+        "model_type": model.network.__class__.__name__,
         "intern_model_parameters": model.network.get_init_args(),
         "model_parameters": model.get_init_args(),
         "state_dict": model.state_dict(),

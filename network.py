@@ -1,5 +1,6 @@
 import torch, math
 import torch.nn as nn
+import torch.nn.functional as F
 import utils, diffusion_utils
 import layers
 
@@ -29,6 +30,15 @@ class GraphTransformer(ModelBase):
     def __init__(self, n_layers: int, input_dims: dict, hidden_mlp_dims: dict, hidden_dims: dict,
                  output_dims: dict, act_fn_in: nn.ReLU(), act_fn_out: nn.ReLU()):
         super().__init__()
+        self.args = {
+            'n_layers': n_layers,
+            'input_dims': input_dims,
+            'hidden_mlp_dims': hidden_mlp_dims,
+            'hidden_dims': hidden_dims,
+            'output_dims': output_dims,
+            'act_fn_in': act_fn_in,
+            'act_fn_out': act_fn_out
+        }
         self.n_layers = n_layers
         self.out_dim_X = output_dims['X']
         self.out_dim_E = output_dims['E']
@@ -135,7 +145,7 @@ class XEyTransformerLayer(nn.Module):
         self.dropout_y2 = nn.Dropout(dropout)
         self.dropout_y3 = nn.Dropout(dropout)
 
-        self.activation = torch.functional.relu
+        self.activation = F.relu
 
     def forward(self, X: torch.Tensor, E: torch.Tensor, y, node_mask: torch.Tensor):
         """ Pass the input through the encoder layer.

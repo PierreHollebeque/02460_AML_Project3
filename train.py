@@ -19,13 +19,14 @@ def train(model, optimizer, data_loader, epochs, device, scheduler=None):
         The device to use for training.
     """
     model.train()
-    if scheduler is not None and not isinstance(scheduler, torch.optim.lr_scheduler.LRScheduler):
-        raise TypeError("scheduler must be a torch.optim.lr_scheduler.LRScheduler instance or None")
+    if scheduler is not None and not isinstance(scheduler, (torch.optim.lr_scheduler._LRScheduler, torch.optim.lr_scheduler.ReduceLROnPlateau)):
+        raise TypeError("scheduler must be a torch.optim.lr_scheduler._LRScheduler or ReduceLROnPlateau instance or None")
 
     total_steps = len(data_loader)*epochs
     progress_bar = tqdm(range(total_steps), desc="Training")
 
     for epoch in range(epochs):
+        epoch_loss = 0.0
         data_iter = iter(data_loader)
         for graph in data_iter:
             graph = graph.to(device)
@@ -33,9 +34,14 @@ def train(model, optimizer, data_loader, epochs, device, scheduler=None):
             loss = model.loss(graph)
             loss.backward()
             optimizer.step()
+            epoch_loss += loss.item()
 
             # Update progress bar
             progress_bar.set_postfix(loss=f"⠀{loss.item():12.4f}", epoch=f"{epoch+1}/{epochs}")
             progress_bar.update()
         if scheduler is not None:
-            scheduler.step() # Update learning rate after each epoch
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                avg_epoch_loss = epoch_loss / len(data_loader)
+                scheduler.step(avg_epoch_loss)
+            else:
+                scheduler.step() # Update learning rate after each epoch

@@ -1,16 +1,24 @@
 import torch
 import sys, os
+import argparse
+
 from train import train
 from ddpm import DDPM
 from network import MODEL_REGISTRY
-import argparse
-
+from baseline import compute_empirical_distribution
+from torch_geometric.loader import DataLoader
+from utils import load_dataset, load_model, save_model, DummyDatasetInfos
 
     
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
 # Add project root to sys.path to ensure modules like 'utils' are found
 project_root_dir = os.path.dirname(current_script_dir)
 sys.path.append(project_root_dir)
+
+# HACK: This is to ensure that models saved when DummyDatasetInfos was defined
+# in `main` can be loaded now that the class has been moved to `utils.py`.
+# It maps the old location ('main.DummyDatasetInfos') to the new one for pickle.
+sys.modules['__main__'].DummyDatasetInfos = DummyDatasetInfos
 
 # Parse arguments
 
@@ -21,13 +29,14 @@ parser.add_argument('--model-path', type=str, default='model.pt', help='file to 
 parser.add_argument('--sample-path', type=str, default='samples.png', help='file to save samples in (default: %(default)s)')
 parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda', 'mps'], help='torch device (default: %(default)s)')
 
-parser.add_argument('--batch-size', type=int, default=10000, metavar='N', help='batch size for training (default: %(default)s)')
+parser.add_argument('--batch-size', type=int, default=32, metavar='N', help='batch size for training (default: %(default)s)')
 parser.add_argument('--epochs', type=int, default=1, metavar='N', help='number of epochs to train (default: %(default)s)')
 parser.add_argument('--lr', type=float, default=1e-3, metavar='V', help='learning rate for training (default: %(default)s)')
 
-parser.add_argument('--num-hidden', type=int, default=128, help='Number of hidden units for FcNetwork (default: %(default)s)')
-parser.add_argument('--network-type', type=str, choices=MODEL_REGISTRY.keys(), help='Choose the network type')
-parser.add_argument('--T', type=float, default=1000, metavar='V', help='Number of steps in the diffusion process (default: %(default)s)')
+parser.add_argument('--num-hidden', type=int, default=128, help='Number of hidden units (default: %(default)s)')
+parser.add_argument('--n-layers', type=int, default=4, help='Number of transformer layers (default: %(default)s)')
+parser.add_argument('--network-type', type=str, default='GraphTransformer', choices=MODEL_REGISTRY.keys(), help='Choose the network type (default: %(default)s)')
+parser.add_argument('--T', type=int, default=1000, metavar='V', help='Number of steps in the diffusion process (default: %(default)s)')
 
 
 args = parser.parse_args()
@@ -36,7 +45,6 @@ for key, value in sorted(vars(args).items()):
     print(key, '=', value)
 
 
-from utils import load_dataset, load_model, save_model # Moved import after sys.path.append
 # Load data
 train_set, val_set, test_set = load_dataset()
 
@@ -60,24 +68,15 @@ if args.mode == 'train':
         # For MUTAG, x_sample.x.shape[1] is typically the node feature dimension (e.g., 7 for atom types).
         # Edge features (E) and global features (y) need to be determined from the dataset structure.
         # Assuming for MUTAG:
-        node_feature_dim = x_sample.x.shape[1] if hasattr(x_sample, 'x') and x_sample.x is not None else 1
-        # For MUTAG, edge features are typically 3 (bond types: single, double, triple).
-        # If your Data object doesn't have explicit edge features, you might need to infer this or set a default.
-        edge_feature_dim = 3
-        global_feature_dim = 0 # MUTAG typically doesn't have global features for this task
+        node_feature_dim = x_sample.x.shape[1]
+        edge_feature_dim = x_sample.edge_attr.shape[1]
+        # The 'y' feature will be used to pass the timestep t. It's a single scalar.
+        global_feature_dim = 1
 
         # Placeholder for stationary distributions (should be computed from training data)
         # For discrete features, these are typically uniform or empirical distributions.
         dummy_node_dist = torch.ones(node_feature_dim) / node_feature_dim
         dummy_edge_dist = torch.ones(edge_feature_dim) / edge_feature_dim
-
-        # Create a simple object to hold dataset information
-        class DummyDatasetInfos:
-            def __init__(self, node_f_dim, edge_f_dim, global_f_dim, node_dist, edge_dist):
-                self.input_dims = {'X': node_f_dim, 'E': edge_f_dim, 'y': global_f_dim}
-                self.output_dims = {'X': node_f_dim, 'E': edge_f_dim, 'y': global_f_dim} # For discrete, output dims are usually same as input
-                self.node_dist = node_dist
-                self.edge_dist = edge_dist
 
         dataset_infos = DummyDatasetInfos(
             node_feature_dim, edge_feature_dim, global_feature_dim,
@@ -86,16 +85,20 @@ if args.mode == 'train':
 
         # Define the network
         network_type = args.network_type
-        if network_type == 'FcNetwork':
-            # WARNING: FcNetwork is a simple MLP and is NOT a Graph Neural Network.
-            # The DDPM expects a GNN that processes (X, E, t, node_mask) and outputs logits.
-            # This instantiation is syntactically correct for FcNetwork but semantically incorrect for the DDPM's task.
-            network = MODEL_REGISTRY[network_type](input_dim=node_feature_dim, num_hidden=args.num_hidden)
-        elif network_type == 'Unet':
-            # WARNING: Unet is for image data and is NOT suitable for graph data.
-            network = MODEL_REGISTRY[network_type]()
+        if network_type == 'GraphTransformer':
+            hidden_mlp_dims = {'X': args.num_hidden * 2, 'E': args.num_hidden, 'y': args.num_hidden}
+            hidden_dims = {'dx': args.num_hidden, 'de': args.num_hidden // 2, 'dy': args.num_hidden // 2, 'n_head': 4, 'dim_ffX': args.num_hidden, 'dim_ffE': args.num_hidden}
+            network = MODEL_REGISTRY[network_type](
+                n_layers=args.n_layers,
+                input_dims=dataset_infos.input_dims,
+                output_dims=dataset_infos.output_dims,
+                hidden_mlp_dims=hidden_mlp_dims,
+                hidden_dims=hidden_dims,
+                act_fn_in=torch.nn.ReLU(),
+                act_fn_out=torch.nn.ReLU()
+            )
         else:
-            raise ValueError(f"Unsupported network type: {network_type}")
+            raise ValueError(f"Unsupported network type: {network_type}. Check registration in network.py")
 
         # Set the number of steps in the diffusion process
         T = args.T
@@ -110,8 +113,10 @@ if args.mode == 'train':
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
     # Print the shape of a batch of data
 
+    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
+
     # Train model
-    train(model, optimizer, train_set, args.epochs, args.device, scheduler)
+    train(model, optimizer, train_loader, args.epochs, args.device, scheduler)
 
     # Save model
     save_model(model, args.model_path)
@@ -124,9 +129,24 @@ elif args.mode == 'test':
 
 elif args.mode == 'sample':
 
+    import numpy as np
+
     if not model:
         raise ValueError(f"No model provided")
-    raise NotImplementedError(f"Module not implemented")
+    
+    all_n, _ = compute_empirical_distribution(train_set)
+    # Sample a single graph with a number of nodes from the empirical distribution
+    n_sampled = np.random.choice(all_n)
+    n_nodes = torch.tensor([n_sampled], device=args.device)
+    
+    print(f"Sampling a graph with {n_sampled} nodes...")
+    X, E, y = model.sample(n_nodes=n_nodes)
+
+    # The returned E is a dense matrix with categorical edge types (0 means no edge).
+    # We create a binary adjacency matrix from the first sample in the batch.
+    adj_matrix = (E[0] > 0).int()
+    print("Generated Adjacency Matrix (sample 0):")
+    print(adj_matrix)
 
 elif args.mode == 'baseline':
     raise NotImplementedError(f"Module not implemented")

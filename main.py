@@ -114,7 +114,7 @@ num_rounds = (total_samples + batch_size - 1) // batch_size
 
 
 if args.mode == 'train':
-    if args.model_path and os.path.exists(args.model_path): # Check if model_path exists
+    if args.model_path and os.path.exists(args.model_path):
         model = load_model(args.model_path, args.device)
     else :
         model = create_model(train_set, args).to(args.device)
@@ -150,7 +150,7 @@ elif args.mode == 'sample':
 
         X_batch, E_batch, y_batch = model.sample(n_nodes=n_nodes_tensor)
 
-        # Conserver les valeurs catégorielles pour afficher les différents types de liaisons
+        # Keep categorical values to display different bond types
         adj_matrix_batch = E_batch.int()
         for j in range(current_batch_size):
             actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]
@@ -194,7 +194,7 @@ elif args.mode == 'stats':
         n_nodes_tensor = torch.tensor(n_sampled_batch, device=args.device)
         _, E_batch, _ = model.sample(n_nodes=n_nodes_tensor)
 
-        # Conserver les valeurs catégorielles
+        # Keep categorical values
         adj_matrix_batch = E_batch.int()
         for j in range(current_batch_size):
             actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]
@@ -216,7 +216,6 @@ elif args.mode == 'hyperparameter_search':
     num_hidden_values = hparam_grid.get("num_hidden", [args.num_hidden])
     n_layers_values = hparam_grid.get("n_layers", [args.n_layers])
 
-    # We will now optimize for a generation quality metric instead of loss
     best_quality_score = -1.0 
     best_hparams = {}
     all_loss_curves = []
@@ -254,7 +253,7 @@ elif args.mode == 'hyperparameter_search':
 
         _, E_batch, _ = model.sample(n_nodes=n_nodes_tensor)
 
-        # Conserver les valeurs catégorielles
+        # Keep categorical values
         adj_matrix_batch = E_batch.int()
         generated_adj_matrices = []
         for j in range(num_eval_samples):
@@ -267,7 +266,7 @@ elif args.mode == 'hyperparameter_search':
         gen_novelty = sum(h not in train_set_hashes for h in gen_wl_hashes) / len(gen_wl_hashes) if len(gen_wl_hashes) > 0 else 0.0
         gen_uniqueness = len(gen_set) / len(gen_wl_hashes) if len(gen_wl_hashes) > 0 else 0.0
         
-        # Use a combined score for optimization, e.g., the product of novelty and uniqueness
+        # A combined score (novelty * uniqueness) is used for optimization.
         quality_score = gen_novelty * gen_uniqueness
 
         print(f"HParams: T={T}, num_hidden={num_hidden}, n_layers={n_layers} -> Quality Score (Novelty*Uniqueness): {quality_score:.4f}")
@@ -275,7 +274,6 @@ elif args.mode == 'hyperparameter_search':
         if quality_score > best_quality_score:
             best_quality_score = quality_score
             best_hparams = {'T': T, 'num_hidden': num_hidden, 'n_layers': n_layers}
-            # Optionally save the best model
             save_model(model, "best_hparam_model.pt")
 
     print("\n--- Hyperparameter Search Complete ---")

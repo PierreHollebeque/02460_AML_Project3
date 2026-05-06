@@ -39,8 +39,9 @@ python main.py train --epochs 50 --batch-size 32 --lr 1e-3 --model-path model.pt
 
 #### 2. Sample from the Model (`sample`)
 Generates graphs using a pre-trained model and prints out the generated adjacency matrices.
+The `--sample-view` flag can be used to save a visual comparison of generated graphs and training set graphs.
 ```bash
-python main.py sample --model-path model.pt --num-sample 5 --batch-size 5
+python main.py sample --model-path model.pt --sample-view samples.png
 ```
 
 #### 3. Hyperparameter Search (`hyperparameter_search`)

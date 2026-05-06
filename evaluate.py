@@ -114,7 +114,7 @@ def compare_graphs_generation(generated_graphs, baseline_graphs, train_set):
     baseline_wl_hashes = hashes(baseline_graphs, graph_type='adjacency_matrix')
     baseline_set = set(baseline_wl_hashes)
     baseline_novelty = sum(h not in train_set_hashes for h in baseline_wl_hashes) / len(baseline_wl_hashes) if len(baseline_wl_hashes) > 0 else 0.0
-    baseline_uniqueness = len(baseline_set) / len(baseline_wl_hashes) / len(baseline_wl_hashes) if len(baseline_wl_hashes) > 0 else 0.0
+    baseline_uniqueness = len(baseline_set) / len(baseline_wl_hashes) if len(baseline_wl_hashes) > 0 else 0.0
     baseline_novel_and_unique = len(baseline_set - train_set_hashes) / len(baseline_wl_hashes) if len(baseline_wl_hashes) > 0 else 0.0
 
     # Structured print

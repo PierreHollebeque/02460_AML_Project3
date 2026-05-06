@@ -54,18 +54,3 @@ def generate_ER_baseline(all_n, r_map, num_graphs, num_features=7):
         generated_adj_matrices.append(adj)
         
     return generated_adj_matrices
-
-if __name__ == '__main__':
-    from utils import load_dataset
-    train_set, val_set, test_set = load_dataset()
-
-    # 1. Analyze training data
-    all_n, r_map = compute_empirical_distribution(train_set)
-
-    print('MeanN : ', np.mean(all_n))
-    # 2. Generate baseline graphs
-    adj_matrices = generate_ER_baseline(all_n, r_map, num_graphs=10)
-
-    print(f"Generated {len(adj_matrices)} graphs.")
-    print(f"Shape of the first matrix : {adj_matrices[0].shape}")
-    print("Partial content :\n", adj_matrices[0][:5, :5]) # Plot corner 5x5

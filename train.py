@@ -1,6 +1,8 @@
 import torch
 from tqdm import tqdm
 from torch_geometric.data import Data
+import matplotlib.pyplot as plt
+
 
 def train(model, optimizer, data_loader, epochs, device, scheduler=None):
     """
@@ -25,6 +27,8 @@ def train(model, optimizer, data_loader, epochs, device, scheduler=None):
     total_steps = len(data_loader)*epochs
     progress_bar = tqdm(range(total_steps), desc="Training")
 
+    loss_train = [] # to plot the loss over training
+
     for epoch in range(epochs):
         epoch_loss = 0.0
         data_iter = iter(data_loader)
@@ -36,6 +40,8 @@ def train(model, optimizer, data_loader, epochs, device, scheduler=None):
             optimizer.step()
             epoch_loss += loss.item()
 
+            loss_train.append(loss.item())
+
             # Update progress bar
             progress_bar.set_postfix(loss=f"⠀{loss.item():12.4f}", epoch=f"{epoch+1}/{epochs}")
             progress_bar.update()
@@ -45,3 +51,10 @@ def train(model, optimizer, data_loader, epochs, device, scheduler=None):
                 scheduler.step(avg_epoch_loss)
             else:
                 scheduler.step() # Update learning rate after each epoch
+    
+    fig,ax = plt.subplots()
+    ax.plot(loss_train)
+    ax.grid(True)
+    ax.set_xlabel('Steps')
+    ax.set_ylabel('Training Loss')
+    fig.savefig('loss.png')

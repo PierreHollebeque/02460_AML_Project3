@@ -69,9 +69,9 @@ def load_dataset():
     # Load the MUTAG dataset
     dataset = TUDataset(root='./data/', name='MUTAG')
 
-    # Split the dataset
-    rng = torch.Generator().manual_seed(0)
-    train_set, val_set, test_set = random_split(dataset, (100, 44, 44), generator=rng)
+    # Use the entire dataset for training
+    train_set = dataset
+    val_set, test_set = [], []
     return train_set, val_set, test_set
 
 def load_model(model_path: str, device: str):

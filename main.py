@@ -146,6 +146,34 @@ elif args.mode == 'sample':
     for idx, adj in enumerate(all_generated_adj_matrices):
         print(f"\nGenerated Adjacency Matrix (sample {idx+1}) - shape : {adj.shape}")
         print(adj)
+    if args.sample_view:
+        import networkx as nx
+        from torch_geometric.utils import to_networkx
+
+        print(f"Saving sample visualization to {args.sample_view}...")
+        num_plot = min(len(all_generated_adj_matrices), 4)
+        if num_plot > 0:
+            fig, axes = plt.subplots(num_plot, 2, figsize=(10, 5 * num_plot))
+            axes = np.array(axes).reshape(num_plot, 2) # Ensure 2D format to avoid subscript errors
+            
+            for i in range(num_plot):
+                # Train set example (left column)
+                train_data = train_set[i] if not isinstance(train_set[i], (list, tuple)) else train_set[i][0]
+                train_nx = to_networkx(train_data, to_undirected=True)
+                
+                # Generated example (right column)
+                gen_adj = all_generated_adj_matrices[i].cpu().numpy()
+                gen_nx = nx.from_numpy_array(gen_adj)
+                
+                axes[i, 0].set_title(f'Train Sample {i+1}')
+                nx.draw(train_nx, ax=axes[i, 0], node_size=50, node_color='#1f78b4', edge_color='gray')
+                
+                axes[i, 1].set_title(f'Generated Sample {i+1}')
+                nx.draw(gen_nx, ax=axes[i, 1], node_size=50, node_color='#d62728', edge_color='gray')
+                
+            plt.tight_layout()
+            plt.savefig(args.sample_view)
+            plt.close()
 
 elif args.mode == 'baseline':
     from baseline import generate_ER_baseline

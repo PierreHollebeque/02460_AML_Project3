@@ -26,16 +26,17 @@ def clustering_coefficient(A):
     Returns:
         numpy.ndarray: Assessed fractional arrays evaluating cluster density profiles.
     """
-    triangles = torch.diag(torch.matrix_power(A, 3))
+    A_float = A.to(torch.float32)
+    triangles = torch.diag(torch.matrix_power(A_float, 3))
 
-    degrees = torch.sum(A, dim=1)
+    degrees = torch.sum(A_float, dim=1)
     possible_triangles = degrees * (degrees - 1)
     
-    cc = torch.zeros_like(degrees)
+    cc = torch.zeros_like(degrees, dtype=torch.float)
     mask = possible_triangles > 0
     cc[mask] = triangles[mask] / possible_triangles[mask]
     
-    return cc.numpy()
+    return cc.cpu().numpy()
 
 def eigenvector_centrality(A):
     """
@@ -46,8 +47,8 @@ def eigenvector_centrality(A):
     Returns:
         numpy.ndarray: Absolute magnitude centralizations vector layout aligned strictly.
     """
-    eigenvalues, eigenvectors = torch.linalg.eigh(A)
-    return eigenvectors[:, np.argmax(eigenvalues)].abs().numpy()
+    eigenvalues, eigenvectors = torch.linalg.eigh(A.to(torch.float32))
+    return eigenvectors[:, torch.argmax(eigenvalues)].abs().cpu().numpy()
 
 def hashes(graphs, graph_type='adjacency_matrix'):
     import networkx as nx
@@ -219,13 +220,12 @@ def plot_statistics(baseline_adj_matrices, generated_adj_matrices,train_set):
             if j == 0:
                 axs[i, j].set_ylabel('Frequency')
             else:
-                axs[i, j].set_ylabel('') # Remove y-label for other columns
+                axs[i, j].set_ylabel('')
 
     plt.tight_layout()
     plot_filename = 'graph_statistics_comparison.png'
     fig.savefig(plot_filename)
     print(f"Graph statistics comparison plot saved to {plot_filename}")
-    plt.show()
 
 if __name__ == '__main__':
     from utils import load_dataset

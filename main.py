@@ -125,7 +125,7 @@ if args.mode == 'train':
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
 
     # Train model
-    train(model, optimizer, train_loader, args.epochs, args.device, plot_loss=True, scheduler)
+    train(model, optimizer, train_loader, args.epochs, args.device, plot_loss=True, scheduler=scheduler)
 
     # Save model
     save_model(model, args.model_path)

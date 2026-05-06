@@ -69,7 +69,8 @@ if args.mode == 'train':
         # Edge features (E) and global features (y) need to be determined from the dataset structure.
         # Assuming for MUTAG:
         node_feature_dim = x_sample.x.shape[1]
-        edge_feature_dim = x_sample.edge_attr.shape[1]
+        # On ajoute + 1 à edge_feature_dim pour intégrer la classe "pas d'arête"
+        edge_feature_dim = x_sample.edge_attr.shape[1] + 1
         # The 'y' feature will be used to pass the timestep t. It's a single scalar.
         global_feature_dim = 1
 

@@ -28,6 +28,7 @@ def train(model, optimizer, data_loader, epochs, device, scheduler=None):
     progress_bar = tqdm(range(total_steps), desc="Training")
 
     loss_train = [] # to plot the loss over training
+    loss_epoch = [] # to plot the smoothed average loss per epoch
 
     for epoch in range(epochs):
         epoch_loss = 0.0
@@ -45,6 +46,9 @@ def train(model, optimizer, data_loader, epochs, device, scheduler=None):
             # Update progress bar
             progress_bar.set_postfix(loss=f"⠀{loss.item():12.4f}", epoch=f"{epoch+1}/{epochs}")
             progress_bar.update()
+            
+        loss_epoch.append(epoch_loss / len(data_loader))
+        
         if scheduler is not None:
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
                 avg_epoch_loss = epoch_loss / len(data_loader)
@@ -52,9 +56,18 @@ def train(model, optimizer, data_loader, epochs, device, scheduler=None):
             else:
                 scheduler.step() # Update learning rate after each epoch
     
+
+    # ==PLOT TRAINING LOSS==
     fig,ax = plt.subplots()
-    ax.plot(loss_train)
+    ax.plot(loss_train, alpha=0.3, label='Per-step Loss')
+    
+    # Plot average epoch loss
+    steps_per_epoch = len(data_loader)
+    epoch_x = [steps_per_epoch * (i + 0.5) for i in range(epochs)]
+    ax.plot(epoch_x, loss_epoch, color='red', linewidth=2, label='Epoch Avg Loss')
+    
     ax.grid(True)
     ax.set_xlabel('Steps')
     ax.set_ylabel('Training Loss')
+    ax.legend()
     fig.savefig('loss.png')

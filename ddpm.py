@@ -236,7 +236,11 @@ class DDPM(nn.Module):
         # The to_dense_adj function returns a dense adjacency matrix with edge attributes.
         # For MUTAG, edge_attr is one-hot, so we take argmax to get class labels.
         E_0_onehot = to_dense_adj(edge_index=graph.edge_index, batch=graph.batch, edge_attr=graph.edge_attr, max_num_nodes=X_0.shape[1])
-        E_0 = E_0_onehot.argmax(dim=-1) # [bs, n_max, n_max]
+        
+        # 0 class for "no-edges"
+        is_edge = E_0_onehot.sum(dim=-1) > 0
+        E_0 = E_0_onehot.argmax(dim=-1) + 1  
+        E_0[~is_edge] = 0                    
         
         bs, n_max = X_0.shape
 

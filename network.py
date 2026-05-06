@@ -294,7 +294,7 @@ class NodeEdgeBlock(nn.Module):
         newX = self.x_out(newX) * x_mask
         diffusion_utils.assert_correctly_masked(newX, x_mask)
 
-        # Process y based on X axnd E
+        # Process y based on X and E
         y = self.y_y(y)
         e_y = self.e_y(E)
         x_y = self.x_y(X)

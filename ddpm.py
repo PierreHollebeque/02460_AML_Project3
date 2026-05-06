@@ -1,6 +1,3 @@
-# Code inspired from DTU course 02460 (Advanced Machine Learning Spring) by Jes Frellsen, 2024
-# Version 1.0 (2024-02-11)
-
 import torch
 import torch.nn as nn
 import diffusion_utils, utils

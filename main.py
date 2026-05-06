@@ -81,7 +81,7 @@ parser.add_argument('--model-path', type=str, default='model.pt', help='file to 
 parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda', 'mps'], help='torch device (default: %(default)s)')
 
 parser.add_argument('--sample-view', type=str, default='samples.png', help='file to save samples in (default: %(default)s)')
-parser.add_argument('--num-sample', type=int, default=4, metavar='N', help='number of samples to perform (used for sampling and stats) (default: %(default)s)')
+parser.add_argument('--num-sample', type=int, default=2, metavar='N', help='number of samples to perform (used for sampling and stats) (default: %(default)s)')
 
 parser.add_argument('--batch-size', type=int, default=32, metavar='N', help='batch size for training and sampling (default: %(default)s)')
 
@@ -116,7 +116,7 @@ num_rounds = (total_samples + batch_size - 1) // batch_size
 
 
 if args.mode == 'train':
-    if args.model_path and os.path.exists(args.model_path): # Check if model_path exists
+    if args.model_path and os.path.exists(args.model_path):
         model = load_model(args.model_path, args.device)
     else :
         model = create_model(train_set, args).to(args.device)
@@ -152,51 +152,25 @@ elif args.mode == 'sample':
 
         X_batch, E_batch, y_batch = model.sample(n_nodes=n_nodes_tensor)
 
-        adj_matrix_batch = (E_batch > 0).int()
+        # Keep categorical values to display different bond types
+        adj_matrix_batch = E_batch.int()
         for j in range(current_batch_size):
             actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]
             all_generated_adj_matrices.append(actual_adj)
 
-    for idx, adj in enumerate(all_generated_adj_matrices):
-        print(f"\nGenerated Adjacency Matrix (sample {idx+1}) - shape : {adj.shape}")
-        print(adj)
     if args.sample_view:
-        import networkx as nx
-        from torch_geometric.utils import to_networkx
+        from utils import plot_view
+        plot_view(train_set,all_generated_adj_matrices,args.sample_view)
 
-        print(f"Saving sample visualization to {args.sample_view}...")
-        num_plot = min(len(all_generated_adj_matrices), 4)
-        if num_plot > 0:
-            fig, axes = plt.subplots(num_plot, 2, figsize=(10, 5 * num_plot))
-            axes = np.array(axes).reshape(num_plot, 2) # Ensure 2D format to avoid subscript errors
-            
-            for i in range(num_plot):
-                # Train set example (left column)
-                train_data = train_set[i] if not isinstance(train_set[i], (list, tuple)) else train_set[i][0]
-                train_nx = to_networkx(train_data, to_undirected=True)
-                
-                # Generated example (right column)
-                gen_adj = all_generated_adj_matrices[i].cpu().numpy()
-                gen_nx = nx.from_numpy_array(gen_adj)
-                
-                axes[i, 0].set_title(f'Train Sample {i+1}')
-                pos_train = nx.spring_layout(train_nx, seed=42)
-                nx.draw(train_nx, pos=pos_train, ax=axes[i, 0], node_size=100, node_color='#1f78b4', edgecolors='black', edge_color='gray', width=1.5)
-                
-                axes[i, 1].set_title(f'Generated Sample {i+1}')
-                pos_gen = nx.spring_layout(gen_nx, seed=42)
-                nx.draw(gen_nx, pos=pos_gen, ax=axes[i, 1], node_size=100, node_color='#d62728', edgecolors='black', edge_color='gray', width=1.5)
-                
-            plt.tight_layout()
-            plt.savefig(args.sample_view)
-            plt.close()
 
 elif args.mode == 'baseline':
     from baseline import generate_ER_baseline
     adj_matrices = generate_ER_baseline(all_n, r_map, num_graphs=args.num_sample)
-    for i in range(args.num_sample):  
-        print(f"Generated Adjacency Matrix (sample {i}) - shape : {adj_matrices[i].shape}")
-        print(adj_matrices[i])
+
+    if args.sample_view:
+        from utils import plot_view
+        plot_view(train_set,adj_matrices,args.sample_view)
+    
 
 elif args.mode == 'stats':
     from baseline import generate_ER_baseline
@@ -222,7 +196,8 @@ elif args.mode == 'stats':
         n_nodes_tensor = torch.tensor(n_sampled_batch, device=args.device)
         _, E_batch, _ = model.sample(n_nodes=n_nodes_tensor)
 
-        adj_matrix_batch = (E_batch > 0).int()
+        # Keep categorical values
+        adj_matrix_batch = E_batch.int()
         for j in range(current_batch_size):
             actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]
             generated_adj_matrices.append(actual_adj)
@@ -243,7 +218,6 @@ elif args.mode == 'hyperparameter_search':
     num_hidden_values = hparam_grid.get("num_hidden", [args.num_hidden])
     n_layers_values = hparam_grid.get("n_layers", [args.n_layers])
 
-    # We will now optimize for a generation quality metric instead of loss
     best_quality_score = -1.0 
     best_hparams = {}
     all_loss_curves = []
@@ -281,7 +255,8 @@ elif args.mode == 'hyperparameter_search':
 
         _, E_batch, _ = model.sample(n_nodes=n_nodes_tensor)
 
-        adj_matrix_batch = (E_batch > 0).int()
+        # Keep categorical values
+        adj_matrix_batch = E_batch.int()
         generated_adj_matrices = []
         for j in range(num_eval_samples):
             actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]
@@ -293,7 +268,7 @@ elif args.mode == 'hyperparameter_search':
         gen_novelty = sum(h not in train_set_hashes for h in gen_wl_hashes) / len(gen_wl_hashes) if len(gen_wl_hashes) > 0 else 0.0
         gen_uniqueness = len(gen_set) / len(gen_wl_hashes) if len(gen_wl_hashes) > 0 else 0.0
         
-        # Use a combined score for optimization, e.g., the product of novelty and uniqueness
+        # A combined score (novelty * uniqueness) is used for optimization.
         quality_score = gen_novelty * gen_uniqueness
 
         print(f"HParams: T={T}, num_hidden={num_hidden}, n_layers={n_layers} -> Quality Score (Novelty*Uniqueness): {quality_score:.4f}")
@@ -301,7 +276,6 @@ elif args.mode == 'hyperparameter_search':
         if quality_score > best_quality_score:
             best_quality_score = quality_score
             best_hparams = {'T': T, 'num_hidden': num_hidden, 'n_layers': n_layers}
-            # Optionally save the best model
             save_model(model, "best_hparam_model.pt")
 
     print("\n--- Hyperparameter Search Complete ---")

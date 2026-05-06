@@ -39,8 +39,9 @@ python main.py train --epochs 50 --batch-size 32 --lr 1e-3 --model-path model.pt
 
 #### 2. Sample from the Model (`sample`)
 Generates graphs using a pre-trained model and prints out the generated adjacency matrices.
+The `--sample-view` flag can be used to save a visual comparison of generated graphs and training set graphs.
 ```bash
-python main.py sample --model-path model.pt --num-sample 5 --batch-size 5
+python main.py sample --num-sample 2
 ```
 
 #### 3. Hyperparameter Search (`hyperparameter_search`)
@@ -53,13 +54,13 @@ python main.py hyperparameter_search --hparams-search-file params.json
 #### 4. Baseline Generation (`baseline`)
 Generates synthetic graphs strictly from the structured baseline distribution (Erdös-Rényi) and prints the matrices.
 ```bash
-python main.py baseline --num-sample 5
+python main.py baseline --num-sample 2
 ```
 
 #### 5. Compare & Compute Statistics (`stats`)
 Evaluates the model by generating graphs, generating baseline ER graphs, and evaluating them against the true training dataset for Uniqueness and Novelty.
 ```bash
-python main.py stats --model-path model.pt --num-sample 100
+python main.py stats --model-path model.pt --num-sample 1000
 ```
 
 ### Common Options

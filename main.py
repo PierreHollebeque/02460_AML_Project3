@@ -147,9 +147,9 @@ elif args.mode == 'sample':
     # The returned E is a group of dense matrix with categorical edge types (0 means no edge).
     # We create a binary adjacency matrix from the first sample in the batch.
     adj_matrix = (E > 0).int()
-    print(adj_matrix.shape)
-    print("Generated Adjacency Matrix (sample 0):")
-    print(adj_matrix)
+    for i in range(args.num_sample):  
+        print(f"Generated Adjacency Matrix (sample {i}):")
+        print(adj_matrix[i,:n_nodes[i],:n_nodes[i]])
 
 elif args.mode == 'baseline':
     raise NotImplementedError(f"Module not implemented")

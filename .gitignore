@@ -1,2 +1,6 @@
 **/__pycache__/
 data/
+
+*.pt
+*.png
+*.pyc

@@ -1,6 +1,5 @@
 # Mini-project 3 in Advanced Machine Learning (02460)
 
-*Advanced Machine Learning : 02460-2026 Mini-project 3 s039894, s271828 & s314159*  
 *Mini-project 3 in Advanced Machine Learning (02460) by Mads ALKJAERSIG (s203372), Rémi BERTHELOT (s254144) & Pierre HOLLEBEQUE (s254136) on 07 May 2026*
 
 This project implements a Discrete Denoising Diffusion Probabilistic Model (DDPM) for graph generation. The diffusion process iteratively adds categorical noise to graph features (nodes, edges) and learns a reverse process using a Graph Transformer neural network to generate novel graphs.

@@ -126,14 +126,20 @@ def plot_view(train_set,all_generated_adj_matrices,sample_view):
     from torch_geometric.utils import to_networkx
     import matplotlib.pyplot as plt
     import numpy as np
-    # Define a color map for different edge types. 
-    # Types usually map to: 1=Single, 2=Double, 3=Triple, 4=Aromatic etc.
+    import matplotlib.lines as mlines
     
     num_plot = min(len(all_generated_adj_matrices), 4)
     if num_plot > 0:
         fig, axes = plt.subplots(num_plot, 2, figsize=(10, 5 * num_plot))
         axes = np.array(axes).reshape(num_plot, 2) # Ensure 2D format to avoid subscript errors
-        edge_colors_map = {1: 'black', 2: 'red', 3: 'blue', 4: 'green', 5: 'orange', 6: 'purple'}
+        # Based on MUTAG dataset: 0=Aromatic, 1=Single, 2=Double, 3=Triple
+        # After argmax+1: 1=Aromatic, 2=Single, 3=Double, 4=Triple
+        edge_colors_map = {
+            1: 'green',  # Aromatic
+            2: 'black',  # Single
+            3: 'red',    # Double
+            4: 'blue'    # Triple
+        }
 
         for i in range(num_plot):
             # Train set example (left column)
@@ -179,8 +185,23 @@ def plot_view(train_set,all_generated_adj_matrices,sample_view):
                     edge_color=train_edge_colors if train_edge_colors else 'black', width=2.0)
             
             axes[i, 1].set_title(f'Generated Sample {i+1}')
-            nx.draw(gen_nx, ax=axes[i, 1], node_size=50, node_color='#d62728', edge_color='gray')
+            pos_gen = nx.spring_layout(gen_nx)
+            nx.draw(gen_nx, pos_gen, ax=axes[i, 1], node_size=50, node_color='#d62728', 
+                    edge_color=gen_edge_colors if gen_edge_colors else 'black', width=2.0)
             
-        plt.tight_layout()
+        # Create legend for edge types
+        legend_labels = {
+            'Aromatic': 'green',
+            'Single': 'black',
+            'Double': 'red',
+            'Triple': 'blue'
+        }
+        legend_handles = [mlines.Line2D([], [], color=color, marker='_', markersize=15, linewidth=2, label=label)
+                          for label, color in legend_labels.items()]
+        
+        # Adjust layout to make space for the legend at the bottom
+        fig.legend(handles=legend_handles, loc='lower center', ncol=len(legend_handles), bbox_to_anchor=(0.5, 0.01))
+        plt.tight_layout(rect=[0, 0.05, 1, 1])
+
         plt.savefig(sample_view)
         plt.close()

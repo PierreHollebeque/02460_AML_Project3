@@ -150,52 +150,25 @@ elif args.mode == 'sample':
 
         X_batch, E_batch, y_batch = model.sample(n_nodes=n_nodes_tensor)
 
-        # Keep the original categorical integer classes to visualize edge types in samples
+        # Conserver les valeurs catégorielles pour afficher les différents types de liaisons
         adj_matrix_batch = E_batch.int()
         for j in range(current_batch_size):
             actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]
             all_generated_adj_matrices.append(actual_adj)
 
-    for idx, adj in enumerate(all_generated_adj_matrices):
-        print(f"\nGenerated Adjacency Matrix (sample {idx+1}) - shape : {adj.shape}")
-        print(adj)
     if args.sample_view:
-        import networkx as nx
-        from torch_geometric.utils import to_networkx
+        from utils import plot_view
+        plot_view(train_set,all_generated_adj_matrices,args.sample_view)
 
-        print(f"Saving sample visualization to {args.sample_view}...")
-        num_plot = min(len(all_generated_adj_matrices), 4)
-        if num_plot > 0:
-            fig, axes = plt.subplots(num_plot, 2, figsize=(10, 5 * num_plot))
-            axes = np.array(axes).reshape(num_plot, 2) # Ensure 2D format to avoid subscript errors
-            
-            for i in range(num_plot):
-                # Train set example (left column)
-                train_data = train_set[i] if not isinstance(train_set[i], (list, tuple)) else train_set[i][0]
-                train_nx = to_networkx(train_data, to_undirected=True)
-                
-                # Generated example (right column)
-                gen_adj = all_generated_adj_matrices[i].cpu().numpy()
-                gen_nx = nx.from_numpy_array(gen_adj)
-                
-                axes[i, 0].set_title(f'Train Sample {i+1}')
-                pos_train = nx.spring_layout(train_nx, seed=42)
-                nx.draw(train_nx, pos=pos_train, ax=axes[i, 0], node_size=100, node_color='#1f78b4', edgecolors='black', edge_color='gray', width=1.5)
-                
-                axes[i, 1].set_title(f'Generated Sample {i+1}')
-                pos_gen = nx.spring_layout(gen_nx, seed=42)
-                nx.draw(gen_nx, pos=pos_gen, ax=axes[i, 1], node_size=100, node_color='#d62728', edgecolors='black', edge_color='gray', width=1.5)
-                
-            plt.tight_layout()
-            plt.savefig(args.sample_view)
-            plt.close()
 
 elif args.mode == 'baseline':
     from baseline import generate_ER_baseline
     adj_matrices = generate_ER_baseline(all_n, r_map, num_graphs=args.num_sample)
-    for i in range(args.num_sample):  
-        print(f"Generated Adjacency Matrix (sample {i}) - shape : {adj_matrices[i].shape}")
-        print(adj_matrices[i])
+
+    if args.sample_view:
+        from utils import plot_view
+        plot_view(train_set,adj_matrices,args.sample_view)
+    
 
 elif args.mode == 'stats':
     from baseline import generate_ER_baseline
@@ -221,7 +194,8 @@ elif args.mode == 'stats':
         n_nodes_tensor = torch.tensor(n_sampled_batch, device=args.device)
         _, E_batch, _ = model.sample(n_nodes=n_nodes_tensor)
 
-        adj_matrix_batch = (E_batch > 0).int()
+        # Conserver les valeurs catégorielles
+        adj_matrix_batch = E_batch.int()
         for j in range(current_batch_size):
             actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]
             generated_adj_matrices.append(actual_adj)
@@ -280,7 +254,8 @@ elif args.mode == 'hyperparameter_search':
 
         _, E_batch, _ = model.sample(n_nodes=n_nodes_tensor)
 
-        adj_matrix_batch = (E_batch > 0).int()
+        # Conserver les valeurs catégorielles
+        adj_matrix_batch = E_batch.int()
         generated_adj_matrices = []
         for j in range(num_eval_samples):
             actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]

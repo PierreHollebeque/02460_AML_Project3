@@ -93,7 +93,7 @@ class DDPM(nn.Module):
 
     def get_Q(self, alpha_bar, limit_dist):
         """
-        Calcule la matrice de transition Q pour la diffusion discrète.
+        Calculates the transition matrix Q for the discrete diffusion.
         """
         bs = alpha_bar.shape[0]
         d = limit_dist.shape[0]
@@ -104,7 +104,7 @@ class DDPM(nn.Module):
 
     def sample(self, n_nodes, number_chain_steps=None):
         """
-        Échantillonne à partir du modèle de diffusion discrète.
+        Samples from the discrete diffusion model.
         """
         batch_size = n_nodes.shape[0]
         device = self.alpha.device

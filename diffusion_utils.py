@@ -251,7 +251,7 @@ def sample_discrete_features(probX, probE, node_mask):
     # Noise E
     # The masked rows should define probability distributions as well
     inverse_edge_mask = ~(node_mask.unsqueeze(1) * node_mask.unsqueeze(2))
-    diag_mask = torch.eye(n).unsqueeze(0).expand(bs, -1, -1)
+    diag_mask = torch.eye(n, device=node_mask.device).unsqueeze(0).expand(bs, -1, -1) # Create directly on device
 
     probE[inverse_edge_mask] = 1 / probE.shape[-1]
     probE[diag_mask.bool()] = 1 / probE.shape[-1]
@@ -262,8 +262,8 @@ def sample_discrete_features(probX, probE, node_mask):
     E_t = probE.multinomial(1).reshape(bs, n, n)   # (bs, n, n)
     E_t = torch.triu(E_t, diagonal=1)
     E_t = (E_t + torch.transpose(E_t, 1, 2))
-
-    return PlaceHolder(X=X_t, E=E_t, y=torch.zeros(bs, 0).type_as(X_t))
+    
+    return PlaceHolder(X=X_t, E=E_t, y=torch.zeros(bs, 0, device=X_t.device)) # Create directly on device
 
 
 def compute_posterior_distribution(M, M_t, Qt_M, Qsb_M, Qtb_M):
@@ -360,6 +360,9 @@ def posterior_distributions(X, E, y, X_t, E_t, y_t, Qt, Qsb, Qtb):
     prob_X = compute_posterior_distribution(M=X, M_t=X_t, Qt_M=Qt.X, Qsb_M=Qsb.X, Qtb_M=Qtb.X)   # (bs, n, dx)
     prob_E = compute_posterior_distribution(M=E, M_t=E_t, Qt_M=Qt.E, Qsb_M=Qsb.E, Qtb_M=Qtb.E)   # (bs, n * n, de)
 
+    bs, n = X.shape[0], X.shape[1]
+    prob_E = prob_E.reshape(bs, n, n, -1)
+
     return PlaceHolder(X=prob_X, E=prob_E, y=y_t)
 
 
@@ -392,5 +395,3 @@ def sample_discrete_feature_noise(limit_dist, node_mask):
     assert (U_E == torch.transpose(U_E, 1, 2)).all()
 
     return PlaceHolder(X=U_X, E=U_E, y=U_y).mask(node_mask)
-
-

@@ -6,19 +6,19 @@ import matplotlib.pyplot as plt
 
 def train(model, optimizer, data_loader, epochs, device, plot_loss=False, scheduler=None):
     """
-    Train a Flow model.
+    Train the graph diffusion model.
 
-    Parameters:
-    model: [Flow]
-       The model to train.
-    optimizer: [torch.optim.Optimizer]
-         The optimizer to use for training.
-    data_loader: [torch.utils.data.DataLoader]
-            The data loader to use for training.
-    epochs: [int]
-        Number of epochs to train for.
-    device: [torch.device]
-        The device to use for training.
+    Args:
+        model (nn.Module): The model to train.
+        optimizer (torch.optim.Optimizer): The optimizer to use for training.
+        data_loader (torch.utils.data.DataLoader): Data loader supplying batch data.
+        epochs (int): Number of epochs to train.
+        device (str): Compute device for execution.
+        plot_loss (bool, optional): If True, plots and saves a training loss curve.
+        scheduler (torch.optim.lr_scheduler, optional): Training learning rate scheduler.
+
+    Returns:
+        list: The average training loss per epoch.
     """
     model.train()
     if scheduler is not None and not isinstance(scheduler, (torch.optim.lr_scheduler._LRScheduler, torch.optim.lr_scheduler.ReduceLROnPlateau)):
@@ -27,8 +27,8 @@ def train(model, optimizer, data_loader, epochs, device, plot_loss=False, schedu
     total_steps = len(data_loader)*epochs
     progress_bar = tqdm(range(total_steps), desc="Training")
 
-    loss_train = [] # to plot the loss over training
-    loss_epoch = [] # to plot the smoothed average loss per epoch
+    loss_train = []
+    loss_epoch = []
 
     for epoch in range(epochs):
         epoch_loss = 0.0
@@ -43,7 +43,6 @@ def train(model, optimizer, data_loader, epochs, device, plot_loss=False, schedu
 
             loss_train.append(loss.item())
 
-            # Update progress bar
             progress_bar.set_postfix(loss=f"⠀{loss.item():12.4f}", epoch=f"{epoch+1}/{epochs}")
             progress_bar.update()
             
@@ -54,15 +53,13 @@ def train(model, optimizer, data_loader, epochs, device, plot_loss=False, schedu
                 avg_epoch_loss = epoch_loss / len(data_loader)
                 scheduler.step(avg_epoch_loss)
             else:
-                scheduler.step() # Update learning rate after each epoch
+                scheduler.step()
     
 
-    # ==PLOT TRAINING LOSS==
     if plot_loss :
         fig,ax = plt.subplots()
         ax.plot(loss_train, alpha=0.3, label='Per-step Loss')
         
-        # Plot average epoch loss
         steps_per_epoch = len(data_loader)
         epoch_x = [steps_per_epoch * (i + 0.5) for i in range(epochs)]
         ax.plot(epoch_x, loss_epoch, color='red', linewidth=2, label='Epoch Avg Loss')

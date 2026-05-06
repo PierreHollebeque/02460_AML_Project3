@@ -1,3 +1,7 @@
+"""
+Utility diagnostic plotting distribution characteristics over graph occurrences dynamically.
+"""
+
 from torch_geometric.datasets import TUDataset
 from torch.utils.data import random_split
 import matplotlib.pyplot as plt

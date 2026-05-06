@@ -13,22 +13,25 @@ from network import MODEL_REGISTRY
 from ddpm import DDPM
 
 
-
-# Add project root to sys.path to ensure modules like 'utils' are found
 current_script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root_dir = os.path.dirname(current_script_dir)
 sys.path.append(project_root_dir)
 
 
 def create_model(x_sample, args):
-    # --- Start of changes for DDPM compatibility ---
+    """
+    Bootstrap definition dynamically registering requested networks wrapping around Graph DDPM.
+
+    Args:
+        x_sample (torch_geometric.data.Data): Baseline graph extracting proper layout shapes.
+        args (argparse.Namespace): Execution command runtime hyperparameter arguments list.
+    Returns:
+        DDPM: Model instance equipped explicitly per specific layer requests.
+    """
     node_feature_dim = x_sample.x.shape[1]
-    # Add + 1 to edge_feature_dim to integrate the "no edge" class
     edge_feature_dim = x_sample.edge_attr.shape[1] + 1
     global_feature_dim = 1
 
-    # Placeholder for stationary distributions (should be computed from training data)
-    # For discrete features, these are typically uniform or empirical distributions.
     dummy_node_dist = torch.ones(node_feature_dim) / node_feature_dim
     dummy_edge_dist = torch.ones(edge_feature_dim) / edge_feature_dim
 
@@ -37,7 +40,6 @@ def create_model(x_sample, args):
         dummy_node_dist, dummy_edge_dist
     )
 
-    # Define the network
     network_type = args.network_type
     if network_type == 'GraphTransformer':
         hidden_mlp_dims = {'X': args.num_hidden * 2, 'E': args.num_hidden, 'y': args.num_hidden}
@@ -54,14 +56,10 @@ def create_model(x_sample, args):
     else:
         raise ValueError(f"Unsupported network type: {network_type}. Check registration in network.py")
 
-    # Set the number of steps in the diffusion process
     T = args.T
-    # Define model
     model = DDPM(network, dataset_infos=dataset_infos, device=args.device, T=T).to(args.device)
     return model
 
-
-# Parse arguments
 
 parser = argparse.ArgumentParser()
 parser.add_argument('mode', type=str, default='train', choices=['train', 'sample', 'hyperparameter_search','baseline','stats'], help='what to do when running the script (default: %(default)s)')
@@ -90,44 +88,34 @@ for key, value in sorted(vars(args).items()):
     print(key, '=', value)
 print()
 
-# Load data
 train_set, _, _ = load_dataset()
 
-# 1. Analyze training data
 all_n, r_map = compute_empirical_distribution(train_set)
 
 print('Mean nodes : ', np.mean(all_n))
 print('Std nodes : ', np.std(all_n))
 
-# 1.0 Compute sampling sizes
 total_samples = args.num_sample
 batch_size = args.batch_size
-num_rounds = (total_samples + batch_size - 1) // batch_size # Calculate number of rounds needed
+num_rounds = (total_samples + batch_size - 1) // batch_size
 
 
-# Choose mode to run
 if args.mode == 'train':
     if args.model_path :
         model = load_model(args.model_path, args.device)
     else :
         x_sample = train_set[0] if not isinstance(train_set[0], (list, tuple)) else train_set[0][0]
-        # Define model
         model = create_model(x_sample, args).to(args.device)
         
 
 
-    # Define optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
-    # Print the shape of a batch of data
 
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
 
-    # Train model
     train(model, optimizer, train_loader, args.epochs, args.device, plot_loss=True, scheduler=scheduler)
 
-    # Save model
     save_model(model, args.model_path)
 
 elif args.mode == 'sample':
@@ -144,28 +132,22 @@ elif args.mode == 'sample':
         if current_batch_size == 0:
             break
 
-        # Sample n_nodes for the current batch
         n_sampled_batch = np.random.choice(all_n, size=current_batch_size, replace=True)
         n_nodes_tensor = torch.tensor(n_sampled_batch, device=args.device)
 
-        # Perform sampling
         X_batch, E_batch, y_batch = model.sample(n_nodes=n_nodes_tensor)
 
-    # The returned E is a group of dense matrix with categorical edge types (0 means no edge).
-    # We create a binary adjacency matrix from the first sample in the batch.
         adj_matrix_batch = (E_batch > 0).int()
         for j in range(current_batch_size):
             actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]
             all_generated_adj_matrices.append(actual_adj)
 
-    # Print all generated adjacency matrices
     for idx, adj in enumerate(all_generated_adj_matrices):
         print(f"\nGenerated Adjacency Matrix (sample {idx+1}) - shape : {adj.shape}")
         print(adj)
 
 elif args.mode == 'baseline':
     from baseline import generate_ER_baseline
-    # 2. Generate baseline graphs
     adj_matrices = generate_ER_baseline(all_n, r_map, num_graphs=args.num_sample)
     for i in range(args.num_sample):  
         print(f"Generated Adjacency Matrix (sample {i}) - shape : {adj_matrices[i].shape}")
@@ -175,11 +157,9 @@ elif args.mode == 'stats':
     from baseline import generate_ER_baseline
     from evaluate import compare_graphs_generation
 
-    # 2. Generate baseline graphs
     print("Generating baseline graphs...")
     baseline_adj_matrices = generate_ER_baseline(all_n, r_map, num_graphs=args.num_sample)
 
-    # 3. Generate model graphs
     print(f"Generating {total_samples} model graphs in batches of {batch_size}...")
     if args.model_path :
         model = load_model(args.model_path, args.device)
@@ -201,7 +181,6 @@ elif args.mode == 'stats':
             actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]
             generated_adj_matrices.append(actual_adj)
 
-    # 4. Compute stats
     print("Computing stats...")
     compare_graphs_generation(generated_adj_matrices, baseline_adj_matrices, train_set)
 
@@ -212,42 +191,33 @@ elif args.mode == 'hyperparameter_search':
     with open(args.hparams_search_file, 'r') as f:
         hparam_grid = json.load(f)
 
-    # Extract lists of values for each hyperparameter
     T_values = hparam_grid.get("T", [args.T])
     num_hidden_values = hparam_grid.get("num_hidden", [args.num_hidden])
     n_layers_values = hparam_grid.get("n_layers", [args.n_layers])
 
     best_loss = float('inf')
     best_hparams = {}
-    all_loss_curves = [] # To store loss curves for plotting
+    all_loss_curves = []
 
-    # Prepare data loader once
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
 
     x_sample = train_set[0] if not isinstance(train_set[0], (list, tuple)) else train_set[0][0]
 
     print("Starting hyperparameter search...")
-    # Iterate over all combinations of hyperparameters
     for T, num_hidden, n_layers in itertools.product(T_values, num_hidden_values, n_layers_values):
         print(f"\n--- Testing HParams: T={T}, num_hidden={num_hidden}, n_layers={n_layers} ---")
 
-        # Create a temporary args object or update the existing one
-        # It's safer to create a copy or update specific attributes
-        current_args = argparse.Namespace(**vars(args)) # Create a mutable copy
+        current_args = argparse.Namespace(**vars(args))
         current_args.T = T
         current_args.num_hidden = num_hidden
         current_args.n_layers = n_layers
 
-        # Create model with current hyperparameters
         model = create_model(x_sample, current_args)
         model.to(current_args.device)
 
-        # Define optimizer and scheduler for the current model
         optimizer = torch.optim.Adam(model.parameters(), lr=current_args.lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
 
-        # Train model and get the final loss
-        # train now returns the list of epoch losses
         current_loss_epochs = train(model, optimizer, train_loader, current_args.epochs, current_args.device, scheduler)
         
         if current_loss_epochs:
@@ -266,7 +236,6 @@ elif args.mode == 'hyperparameter_search':
     print(f"Best Loss: {best_loss:.4f}")
     print(f"Best Hyperparameters: {best_hparams}")
 
-    # Plot all loss curves
     fig, ax = plt.subplots(figsize=(10, 6))
     for loss_curve, hparams in all_loss_curves:
         label = f"T={hparams['T']}, H={hparams['num_hidden']}, L={hparams['n_layers']}"

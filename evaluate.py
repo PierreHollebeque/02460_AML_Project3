@@ -51,9 +51,6 @@ def eigenvector_centrality(A):
     return eigenvectors[:, torch.argmax(eigenvalues)].abs().cpu().numpy()
 
 def hashes(graphs, graph_type='adjacency_matrix'):
-    import networkx as nx
-    from torch_geometric.utils import to_networkx
-
     """
     Computes Weisfeiler-Lehman hashes for a list of graphs.
 
@@ -66,11 +63,23 @@ def hashes(graphs, graph_type='adjacency_matrix'):
     Returns:
         list: A list of WL hashes (strings).
     """
+    import networkx as nx
+    from torch_geometric.utils import to_dense_adj
+
     nx_graphs = []
     if graph_type == 'geometric':
         for data in graphs:
-            # Ensure data is on CPU before converting to NetworkX
-            h = to_networkx(data.cpu(), to_undirected=True)
+            # Convert geometric data to a categorical adjacency matrix to handle edge attributes correctly.
+            # h = to_networkx(data.cpu(), to_undirected=True)
+            if data.num_nodes > 0:
+                adj_onehot = to_dense_adj(edge_index=data.edge_index, edge_attr=data.edge_attr, max_num_nodes=data.num_nodes)[0]
+                is_edge = adj_onehot.sum(dim=-1) > 0
+                # The model adds 1 to argmax, so we do the same for consistency.
+                adj_categorical = adj_onehot.argmax(dim=-1) + 1
+                adj_categorical[~is_edge] = 0
+                h = nx.from_numpy_array(adj_categorical.cpu().numpy())
+            else:
+                h = nx.Graph() # Empty graph
             nx_graphs.append(h)
     elif graph_type == 'adjacency_matrix':
         for data in graphs:
@@ -83,7 +92,9 @@ def hashes(graphs, graph_type='adjacency_matrix'):
     wl_hashes = []
     for g in nx_graphs:
         try:
-            h = nx.weisfeiler_lehman_graph_hash(g, iterations=10)
+            # Use edge attributes for hashing. nx.from_numpy_array stores them as 'weight'.
+            # This is crucial for distinguishing graphs with different edge types.
+            h = nx.weisfeiler_lehman_graph_hash(g, iterations=10, edge_attr='weight')
             wl_hashes.append(h)
         except Exception as e:
             print(f"Warning: Could not compute WL hash for a graph. Error: {e}")

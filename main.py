@@ -70,7 +70,7 @@ def create_model(train_set, args):
         raise ValueError(f"Unsupported network type: {network_type}. Check registration in network.py")
 
     T = args.T
-    model = DDPM(network, dataset_infos=dataset_infos, device=args.device, T=T).to(args.device)
+    model = DDPM(network, dataset_infos=dataset_infos, device=args.device, T=T, schedule=args.schedule, lambda_E=args.lambda_E).to(args.device)
     return model
 
 
@@ -92,6 +92,8 @@ parser.add_argument('--num-hidden', type=int, default=128, help='Number of hidde
 parser.add_argument('--n-layers', type=int, default=4, help='Number of transformer layers (default: %(default)s)')
 parser.add_argument('--network-type', type=str, default='GraphTransformer', choices=MODEL_REGISTRY.keys(), help='Choose the network type (default: %(default)s)')
 parser.add_argument('--T', type=int, default=128, metavar='V', help='Number of steps in the diffusion process (default: %(default)s)')
+parser.add_argument('--schedule', type=str, default='cosine', choices=['linear', 'cosine'], help='Noise schedule for diffusion (default: %(default)s)')
+parser.add_argument('--lambda-E', type=float, default=2.0, help='Weight of the edge loss (default: %(default)s)')
 
 parser.add_argument('--hparams-search-file', type=str, default='params.json', help='file containing all the hyperparameters combinations to search over (default: %(default)s)')
 
@@ -267,7 +269,7 @@ elif args.mode == 'hyperparameter_search':
         optimizer = torch.optim.Adam(model.parameters(), lr=current_args.lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
 
-        _,_  = train(model, optimizer, train_loader, current_args.epochs, current_args.device, scheduler)
+        _,_  = train(model, optimizer, train_loader, current_args.epochs, current_args.device, scheduler=scheduler)
         
         # --- Evaluation Step ---
         print("  > Generating samples for evaluation...")

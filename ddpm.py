@@ -11,7 +11,7 @@ from torch_geometric.utils import to_dense_adj, to_dense_batch
 
 
 class DDPM(nn.Module):
-    def __init__(self, network, dataset_infos, device, beta_1=1e-4, beta_T=2e-2, T=100):
+    def __init__(self, network, dataset_infos, device, beta_1=1e-4, beta_T=2e-2, T=100, schedule='cosine', lambda_E=2.0):
         """
         Initialize a Discrete Denoising Diffusion Probabilistic Model (DDPM).
 
@@ -22,6 +22,8 @@ class DDPM(nn.Module):
             beta_1 (float): The noise at the first step of the diffusion process.
             beta_T (float): The noise at the last step of the diffusion process.
             T (int): The number of steps in the diffusion process.
+            schedule (str): The noise schedule to use ('linear' or 'cosine').
+            lambda_E (float): The weight of the edge cross-entropy loss.
         """
         super(DDPM, self).__init__()
         self.device = device
@@ -29,8 +31,9 @@ class DDPM(nn.Module):
         self.network = network
         self.beta_1 = beta_1
         self.beta_T = beta_T
-        self._init_args = {'dataset_infos': dataset_infos, 'beta_1': beta_1, 'beta_T': beta_T, 'T': T}
+        self._init_args = {'dataset_infos': dataset_infos, 'beta_1': beta_1, 'beta_T': beta_T, 'T': T, 'schedule': schedule, 'lambda_E': lambda_E}
         self.T = T
+        self.lambda_E = lambda_E
 
         self.Xdim = dataset_infos.input_dims['X']
         self.Edim = dataset_infos.input_dims['E']
@@ -196,10 +199,13 @@ class DDPM(nn.Module):
         y = torch.hstack((noisy_data['y_t'], extra_data.y))
         return self.network(X, E, y, node_mask)
 
-    def loss(self, graph, lambda_E=1.0):
+    def loss(self, graph, lambda_E=None):
         """
         Compute the Cross-Entropy training loss for the DDPM algorithm applied to graphs.
         """
+        if lambda_E is None:
+            lambda_E = self.lambda_E
+
         # Convert torch_geometric.data.Batch to dense tensors
         X_0_onehot, node_mask = to_dense_batch(graph.x, batch=graph.batch)
         X_0 = X_0_onehot.argmax(dim=-1) # [bs, n_max]
@@ -241,9 +247,16 @@ class DDPM(nn.Module):
         X_t_onehot = F.one_hot(X_t, num_classes=self.Xdim).float()
         E_t_onehot = F.one_hot(E_t, num_classes=self.Edim).float()
 
-        # Cast diffusion timestep for network input conditioning
-        t_float = t.float().unsqueeze(-1)
-        pred = self.network(X_t_onehot, E_t_onehot, t_float, node_mask)
+        # Normalize t to [0, 1] and prepare data for the network, consistent with sampling
+        t_norm = t.float() / self.T
+        noisy_data = {
+            'X_t': X_t_onehot, 
+            'E_t': E_t_onehot, 
+            'y_t': torch.zeros(bs, 0, device=X_0.device), # No global features in this model
+            't': t_norm.unsqueeze(-1)
+        }
+        extra_data = self.compute_extra_data(noisy_data)
+        pred = self.forward(noisy_data, extra_data, node_mask)
         pred_X_logits, pred_E_logits = pred.X, pred.E
 
         # 5. Compute masked Cross-Entropy Loss

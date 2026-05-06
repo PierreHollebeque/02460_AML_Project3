@@ -275,17 +275,18 @@ def compute_posterior_distribution(M, M_t, Qt_M, Qsb_M, Qtb_M):
     M_t = M_t.flatten(start_dim=1, end_dim=-2).to(torch.float32)    # same
 
     Qt_M_T = torch.transpose(Qt_M, -2, -1)      # (bs, d, d)
-
-    left_term = M_t @ Qt_M_T   # (bs, N, d)
-    right_term = M @ Qsb_M     # (bs, N, d)
-    product = left_term * right_term    # (bs, N, d)
-
-    denom = M @ Qtb_M     # (bs, N, d) @ (bs, d, d) = (bs, N, d)
-    denom = (denom * M_t).sum(dim=-1)   # (bs, N, d) * (bs, N, d) + sum = (bs, N)
-    # denom = product.sum(dim=-1)
-    # denom[denom == 0.] = 1
-
-    prob = product / denom.unsqueeze(-1)    # (bs, N, d)
+    left_term = M_t @ Qt_M_T   # (bs, N, d)  q(z_t | z_{t-1})
+    
+    Qtb_M_T = torch.transpose(Qtb_M, -2, -1)    # (bs, d, d)
+    q_xt_given_x0 = M_t @ Qtb_M_T               # (bs, N, d) q(z_t | x_0)
+    
+    # Bayes
+    M_divided = M / (q_xt_given_x0 + 1e-6)      # (bs, N, d)
+    right_term = M_divided @ Qsb_M              # (bs, N, d)
+    
+    prob = left_term * right_term               # (bs, N, d)
+    
+    prob = prob / (prob.sum(dim=-1, keepdim=True) + 1e-6)
 
     return prob
 

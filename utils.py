@@ -77,16 +77,14 @@ def load_dataset():
 def load_model(model_path: str, device: str):
     from ddpm import DDPM
     from network import MODEL_REGISTRY
-    map_location = torch.device(device) if device != "cpu" else None
-    if not os.path.exists(model_path):
-        return None
 
     # In PyTorch >= 2.6, weights_only defaults to True. We set it to False
     # because our saved model includes non-tensor objects like activation function instances.
     # This is safe as we are loading a model we saved ourselves.
-    saved = torch.load(model_path, map_location=map_location, weights_only=False)
+    saved = torch.load(model_path, weights_only=False)
     model_type = saved.get("model_type")
     model_parameters = saved.get("model_parameters")
+    model_parameters['device'] = device
     intern_model_parameters = saved.get("intern_model_parameters")
     model_dict = saved.get("state_dict")
 

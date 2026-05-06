@@ -26,8 +26,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument('mode', type=str, default='train', choices=['train', 'sample', 'test','baseline','stats'], help='what to do when running the script (default: %(default)s)')
 
 parser.add_argument('--model-path', type=str, default='model.pt', help='file to save model to or load model from (default: %(default)s)')
-parser.add_argument('--sample-path', type=str, default='samples.png', help='file to save samples in (default: %(default)s)')
 parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda', 'mps'], help='torch device (default: %(default)s)')
+
+parser.add_argument('--sample-path', type=str, default='samples.png', help='file to save samples in (default: %(default)s)')
+parser.add_argument('--num-sample', type=int, default=1, metavar='N', help='number of samples to perform (default: %(default)s)')
 
 parser.add_argument('--batch-size', type=int, default=32, metavar='N', help='batch size for training (default: %(default)s)')
 parser.add_argument('--epochs', type=int, default=1, metavar='N', help='number of epochs to train (default: %(default)s)')
@@ -104,7 +106,7 @@ if args.mode == 'train':
         # Set the number of steps in the diffusion process
         T = args.T
         # Define model
-        model = DDPM(network, dataset_infos=dataset_infos, T=T).to(args.device)
+        model = DDPM(network, dataset_infos=dataset_infos, device=args.device, T=T).to(args.device)
         # --- End of changes for DDPM compatibility ---
 
 
@@ -136,16 +138,16 @@ elif args.mode == 'sample':
         raise ValueError(f"No model provided")
     
     all_n, _ = compute_empirical_distribution(train_set)
-    # Sample a single graph with a number of nodes from the empirical distribution
-    n_sampled = np.random.choice(all_n)
-    n_nodes = torch.tensor([n_sampled], device=args.device)
-    
+    # Sample several graphs with a number of nodes from the empirical distribution
+    n_sampled = np.random.choice(all_n,size=args.num_sample, replace=True)
+    n_nodes = torch.tensor(n_sampled, device=args.device)
     print(f"Sampling a graph with {n_sampled} nodes...")
     X, E, y = model.sample(n_nodes=n_nodes)
 
-    # The returned E is a dense matrix with categorical edge types (0 means no edge).
+    # The returned E is a group of dense matrix with categorical edge types (0 means no edge).
     # We create a binary adjacency matrix from the first sample in the batch.
-    adj_matrix = (E[0] > 0).int()
+    adj_matrix = (E > 0).int()
+    print(adj_matrix.shape)
     print("Generated Adjacency Matrix (sample 0):")
     print(adj_matrix)
 

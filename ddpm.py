@@ -10,7 +10,7 @@ from torch_geometric.utils import to_dense_adj, to_dense_batch
 
 
 class DDPM(nn.Module):
-    def __init__(self, network, dataset_infos,beta_1=1e-4, beta_T=2e-2, T=100):
+    def __init__(self, network, dataset_infos, device, beta_1=1e-4, beta_T=2e-2, T=100):
         """
         Initialize a DDPM model.
 
@@ -25,7 +25,7 @@ class DDPM(nn.Module):
             The number of steps in the diffusion process.
         """
         super(DDPM, self).__init__()
-        self.device = 'cpu'
+        self.device = device
 
         self.network = network
         self.beta_1 = beta_1
@@ -43,10 +43,8 @@ class DDPM(nn.Module):
 
         # Stationary distributions for the discrete features, as per the user's request
         # for the transition matrices Qt_X and Qt_E.
-        # These are the 'a_m' and 'b_m' distributions.
-        self.limit_dist_X = dataset_infos.node_dist
-        self.limit_dist_E = dataset_infos.edge_dist # Assuming this is provided
-
+        self.limit_dist_X = dataset_infos.node_dist.to(device)
+        self.limit_dist_E = dataset_infos.edge_dist.to(device)
 
 
 
@@ -112,64 +110,64 @@ class DDPM(nn.Module):
             number_chain_steps = self.T
         assert number_chain_steps <= self.T
 
-        n_nodes_max = torch.max(n_nodes).item()
+        with torch.no_grad(): # Sampling is an inference process, no gradients needed
+            n_nodes_max = torch.max(n_nodes).item()
 
-        # Build the masks
-        arange = torch.arange(n_nodes_max, device=device).unsqueeze(0).expand(batch_size, -1)
-        node_mask = arange < n_nodes.unsqueeze(1)
+            # Build the masks
+            arange = torch.arange(n_nodes_max, device=device).unsqueeze(0).expand(batch_size, -1)
+            node_mask = arange < n_nodes.unsqueeze(1)
 
-        # 1. Sample z_T from the limit distribution (returns one-hot)
-        limit_dist = utils.PlaceHolder(
-            X=self.limit_dist_X.to(device),
-            E=self.limit_dist_E.to(device),
-            y=torch.zeros(self.ydim_output, device=device)
-        )
-        z_T = diffusion_utils.sample_discrete_feature_noise(limit_dist, node_mask)
-        
-        X, E, y = z_T.X, z_T.E, z_T.y
-        assert (E == torch.transpose(E, 1, 2)).all()
-        
-        # Iteratively sample p(z_s | z_t) for t = T-1 down to 0
-        for s_int in reversed(range(0, number_chain_steps)):
-            s_array = s_int - 1
-
-            t_array = s_int * torch.ones((batch_size, 1), device=device)
-            t_norm = t_array / self.T
-
-            # Get alpha and alpha_bar
-            alpha_bar_t = self.alpha_cumprod[s_int].expand(batch_size)
-            alpha_t = self.alpha[s_int].expand(batch_size)
-            if s_array >= 0:
-                alpha_bar_s = self.alpha_cumprod[s_array].expand(batch_size)
-            else:
-                alpha_bar_s = torch.ones(batch_size, device=device)
+            # 1. Sample z_T from the limit distribution (returns one-hot)
+            limit_dist = utils.PlaceHolder(
+                X=self.limit_dist_X,
+                E=self.limit_dist_E,
+                y=torch.zeros(self.ydim_output, device=device)
+            )
+            z_T = diffusion_utils.sample_discrete_feature_noise(limit_dist, node_mask)
             
-            # Compute Transition Matrices
-            Qt_X = self.get_Q(alpha_t, self.limit_dist_X.to(device))
-            Qtb_X = self.get_Q(alpha_bar_t, self.limit_dist_X.to(device))
-            Qsb_X = self.get_Q(alpha_bar_s, self.limit_dist_X.to(device))
-
-            Qt_E = self.get_Q(alpha_t, self.limit_dist_E.to(device))
-            Qtb_E = self.get_Q(alpha_bar_t, self.limit_dist_E.to(device))
-            Qsb_E = self.get_Q(alpha_bar_s, self.limit_dist_E.to(device))
-
-            Qt = utils.PlaceHolder(X=Qt_X, E=Qt_E, y=None)
-            Qtb = utils.PlaceHolder(X=Qtb_X, E=Qtb_E, y=None)
-            Qsb = utils.PlaceHolder(X=Qsb_X, E=Qsb_E, y=None)
-
-            z_s = self.sample_p_zs_given_zt_discrete(t_norm, X, E, y, node_mask, Qt, Qsb, Qtb)
+            X, E, y = z_T.X, z_T.E, z_T.y
             
-            # z_s contains class integers. Convert them to one-hot for the next step.
-            X = F.one_hot(z_s.X, num_classes=self.Xdim).float()
-            E = F.one_hot(z_s.E, num_classes=self.Edim).float()
-            y = z_s.y
+            # Iteratively sample p(z_s | z_t) for t = T-1 down to 0
+            for s_int in reversed(range(0, number_chain_steps)):
+                s_array = s_int - 1
 
-        # After the loop, X and E are the final one-hot generated features
-        final_graph = utils.PlaceHolder(X=X, E=E, y=y)
-        final_graph.mask(node_mask, collapse=True) # Transforms one-hot to class integers
-        X, E, y = final_graph.X, final_graph.E, final_graph.y
-        
-        return X, E, y
+                t_array = s_int * torch.ones((batch_size, 1), device=device)
+                t_norm = t_array / self.T
+
+                # Get alpha and alpha_bar
+                alpha_bar_t = self.alpha_cumprod[s_int].expand(batch_size)
+                alpha_t = self.alpha[s_int].expand(batch_size)
+                if s_array >= 0:
+                    alpha_bar_s = self.alpha_cumprod[s_array].expand(batch_size)
+                else:
+                    alpha_bar_s = torch.ones(batch_size, device=device)
+                
+                # Compute Transition Matrices (limit_dist_X/E are already on device)
+                Qt_X = self.get_Q(alpha_t, self.limit_dist_X)
+                Qtb_X = self.get_Q(alpha_bar_t, self.limit_dist_X)
+                Qsb_X = self.get_Q(alpha_bar_s, self.limit_dist_X)
+
+                Qt_E = self.get_Q(alpha_t, self.limit_dist_E)
+                Qtb_E = self.get_Q(alpha_bar_t, self.limit_dist_E)
+                Qsb_E = self.get_Q(alpha_bar_s, self.limit_dist_E)
+
+                Qt = utils.PlaceHolder(X=Qt_X, E=Qt_E, y=None)
+                Qtb = utils.PlaceHolder(X=Qtb_X, E=Qtb_E, y=None)
+                Qsb = utils.PlaceHolder(X=Qsb_X, E=Qsb_E, y=None)
+
+                z_s = self.sample_p_zs_given_zt_discrete(t_norm, X, E, y, node_mask, Qt, Qsb, Qtb)
+                
+                # z_s contains class integers. Convert them to one-hot for the next step.
+                X = F.one_hot(z_s.X, num_classes=self.Xdim).float()
+                E = F.one_hot(z_s.E, num_classes=self.Edim).float()
+                y = z_s.y
+
+            # After the loop, X and E are the final one-hot generated features
+            final_graph = utils.PlaceHolder(X=X, E=E, y=y)
+            final_graph.mask(node_mask, collapse=True) # Transforms one-hot to class integers
+            X, E, y = final_graph.X, final_graph.E, final_graph.y
+            
+            return X, E, y
 
     def sample_p_zs_given_zt_discrete(self, t_norm, X_t, E_t, y_t, node_mask, Qt, Qsb, Qtb):
         """Samples from zs ~ p(zs | zt) using discrete transition matrices."""
@@ -241,8 +239,8 @@ class DDPM(nn.Module):
         alpha_bar = self.alpha_cumprod.to(X_0.device)[t]  # (bs,)
 
         # Compute cumulative transition matrices Qt_bar
-        Qtb_X = self.get_Q(alpha_bar, self.limit_dist_X.to(X_0.device))
-        Qtb_E = self.get_Q(alpha_bar, self.limit_dist_E.to(X_0.device))
+        Qtb_X = self.get_Q(alpha_bar, self.limit_dist_X)
+        Qtb_E = self.get_Q(alpha_bar, self.limit_dist_E)
 
         # Node corruption: sample from q(X_t | X_0) = X_0 @ Qt_bar
         prob_X = torch.bmm(F.one_hot(X_0, num_classes=self.Xdim).float(), Qtb_X)

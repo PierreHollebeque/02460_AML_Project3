@@ -91,22 +91,23 @@ class DDPM(nn.Module):
         indices = (t_normalized * (self.T - 1)).round().long().clamp(0, self.T - 1)
         return self.gamma_schedule[indices]
 
+    def get_Q(self, alpha_bar, limit_dist):
+        """
+        Calcule la matrice de transition Q pour la diffusion discrète.
+        """
+        bs = alpha_bar.shape[0]
+        d = limit_dist.shape[0]
+        alpha_bar = alpha_bar.view(bs, 1, 1)
+        limit_dist = limit_dist.view(1, 1, d)
+        Q = alpha_bar * torch.eye(d, device=alpha_bar.device).unsqueeze(0) + (1 - alpha_bar) * limit_dist.expand(bs, d, d)
+        return Q
 
     def sample(self, n_nodes, number_chain_steps=None):
         """
-        Sample from the model.
-
-        Parameters:
-        n_nodes: [torch.Tensor]
-            The size of the graph to generate (batch size, number of nodes).
-        number_chain_steps: [int]
-            The number of steps in the diffusion process (default:None).
-        Returns:
-        [torch.Tensor]
-            The generated samples.
+        Échantillonne à partir du modèle de diffusion discrète.
         """
-        # Sample x_t for t=T (i.e., Gaussian noise)
         batch_size = n_nodes.shape[0]
+        device = self.alpha.device
         if number_chain_steps is None:
             number_chain_steps = self.T
         assert number_chain_steps <= self.T
@@ -114,96 +115,85 @@ class DDPM(nn.Module):
         n_nodes_max = torch.max(n_nodes).item()
 
         # Build the masks
-        arange = torch.arange(n_nodes_max, device=self.device).unsqueeze(0).expand(batch_size, -1)
+        arange = torch.arange(n_nodes_max, device=device).unsqueeze(0).expand(batch_size, -1)
         node_mask = arange < n_nodes.unsqueeze(1)
-        node_mask = node_mask.float()
 
-        # Sample noise  -- z has size (n_samples, n_nodes, n_features)
-        z_T = diffusion_utils.sample_feature_noise(X_size=(batch_size, n_nodes_max, self.Xdim_output),
-                                                   E_size=(batch_size, n_nodes_max, n_nodes_max, self.Edim_output),
-                                                   y_size=(batch_size, self.ydim_output),
-                                                   node_mask=node_mask)
+        # 1. Sample z_T from the limit distribution (returns one-hot)
+        limit_dist = utils.PlaceHolder(
+            X=self.limit_dist_X.to(device),
+            E=self.limit_dist_E.to(device),
+            y=torch.zeros(self.ydim_output, device=device)
+        )
+        z_T = diffusion_utils.sample_discrete_feature_noise(limit_dist, node_mask)
         
         X, E, y = z_T.X, z_T.E, z_T.y
-
         assert (E == torch.transpose(E, 1, 2)).all()
         
-
-        # Iteratively sample p(z_s | z_t) for t = 1, ..., T, with s = t - 1.
+        # Iteratively sample p(z_s | z_t) for t = T-1 down to 0
         for s_int in reversed(range(0, number_chain_steps)):
-            s_array = s_int * torch.ones((batch_size, 1)).type_as(y)
-            t_array = s_array + 1
-            s_norm = s_array / self.T
+            s_array = s_int - 1
+
+            t_array = s_int * torch.ones((batch_size, 1), device=device)
             t_norm = t_array / self.T
 
-            z_s = self.sample_p_zs_given_zt(s=s_norm, t=t_norm, X_t=X, E_t=E, y_t=y, node_mask=node_mask)
-            X, E, y = z_s.X, z_s.E, z_s.y
+            # Get alpha and alpha_bar
+            alpha_bar_t = self.alpha_cumprod[s_int].expand(batch_size)
+            alpha_t = self.alpha[s_int].expand(batch_size)
+            if s_array >= 0:
+                alpha_bar_s = self.alpha_cumprod[s_array].expand(batch_size)
+            else:
+                alpha_bar_s = torch.ones(batch_size, device=device)
+            
+            # Compute Transition Matrices
+            Qt_X = self.get_Q(alpha_t, self.limit_dist_X.to(device))
+            Qtb_X = self.get_Q(alpha_bar_t, self.limit_dist_X.to(device))
+            Qsb_X = self.get_Q(alpha_bar_s, self.limit_dist_X.to(device))
 
-        final_graph = self.sample_discrete_graph_given_z0(X, E, y, node_mask)
+            Qt_E = self.get_Q(alpha_t, self.limit_dist_E.to(device))
+            Qtb_E = self.get_Q(alpha_bar_t, self.limit_dist_E.to(device))
+            Qsb_E = self.get_Q(alpha_bar_s, self.limit_dist_E.to(device))
+
+            Qt = utils.PlaceHolder(X=Qt_X, E=Qt_E, y=None)
+            Qtb = utils.PlaceHolder(X=Qtb_X, E=Qtb_E, y=None)
+            Qsb = utils.PlaceHolder(X=Qsb_X, E=Qsb_E, y=None)
+
+            z_s = self.sample_p_zs_given_zt_discrete(t_norm, X, E, y, node_mask, Qt, Qsb, Qtb)
+            
+            # z_s contains class integers. Convert them to one-hot for the next step.
+            X = F.one_hot(z_s.X, num_classes=self.Xdim).float()
+            E = F.one_hot(z_s.E, num_classes=self.Edim).float()
+            y = z_s.y
+
+        # After the loop, X and E are the final one-hot generated features
+        final_graph = utils.PlaceHolder(X=X, E=E, y=y)
+        final_graph.mask(node_mask, collapse=True) # Transforms one-hot to class integers
         X, E, y = final_graph.X, final_graph.E, final_graph.y
-        assert (E == torch.transpose(E, 1, 2)).all()
+        
+        return X, E, y
 
-        return X,E,y
-
-
-    def sample_p_zs_given_zt(self, s, t, X_t, E_t, y_t, node_mask):
-        """Samples from zs ~ p(zs | zt). Only used during sampling."""
-        gamma_s = self.gamma(s)
-        gamma_t = self.gamma(t)
-
-        sigma2_t_given_s, sigma_t_given_s, alpha_t_given_s = diffusion_utils.sigma_and_alpha_t_given_s(gamma_t,
-                                                                                                       gamma_s,
-                                                                                                       X_t.size())
-        sigma_s = diffusion_utils.sigma(gamma_s, target_shape=X_t.size())
-        sigma_t = diffusion_utils.sigma(gamma_t, target_shape=X_t.size())
-
-        E_t = (E_t + E_t.transpose(1, 2)) / 2
-        noisy_data = {'X_t': X_t, 'E_t': E_t, 'y_t': y_t, 't': t}
+    def sample_p_zs_given_zt_discrete(self, t_norm, X_t, E_t, y_t, node_mask, Qt, Qsb, Qtb):
+        """Samples from zs ~ p(zs | zt) using discrete transition matrices."""
+        noisy_data = {'X_t': X_t, 'E_t': E_t, 'y_t': y_t, 't': t_norm}
         extra_data = self.compute_extra_data(noisy_data)
-        eps = self.forward(noisy_data, extra_data, node_mask)
-
-        # Compute mu for p(zs | zt).
-        mu_X = X_t / alpha_t_given_s - (sigma2_t_given_s / (alpha_t_given_s * sigma_t)) * eps.X
-        mu_E = E_t / alpha_t_given_s.unsqueeze(1) - (sigma2_t_given_s / (alpha_t_given_s * sigma_t)).unsqueeze(1) * eps.E
-        mu_y = y_t / alpha_t_given_s.squeeze(1) - (sigma2_t_given_s / (alpha_t_given_s * sigma_t)).squeeze(1) * eps.y
-
-        # Compute sigma for p(zs | zt).
-        sigma = sigma_t_given_s * sigma_s / sigma_t
-
-        # Sample zs given the parameters derived from zt.
-        z_s = diffusion_utils.sample_normal(mu_X, mu_E,  mu_y, sigma, node_mask).type_as(mu_X)
-
+        
+        # Predict X_0, E_0 logits
+        pred = self.forward(noisy_data, extra_data, node_mask)
+        
+        # Convert logits to probability distributions
+        pred_prob_X = F.softmax(pred.X, dim=-1)
+        pred_prob_E = F.softmax(pred.E, dim=-1)
+        
+        # Compute posterior q(z_s | z_t, z_0)
+        posteriors = diffusion_utils.posterior_distributions(
+            X=pred_prob_X, E=pred_prob_E, y=pred.y, 
+            X_t=X_t, E_t=E_t, y_t=y_t, 
+            Qt=Qt, Qsb=Qsb, Qtb=Qtb
+        )
+        
+        # Sample from the posterior
+        z_s = diffusion_utils.sample_discrete_features(posteriors.X, posteriors.E, node_mask)
+        
         return z_s
-
-    def sample_discrete_graph_given_z0(self, X_0, E_0, y_0, node_mask):
-        """ Samples X, E, y ~ p(X, E, y|z0): once the diffusion is done, we need to map the result
-        to categorical values.
-        """
-        zeros = torch.zeros(size=(X_0.size(0), 1), device=X_0.device)
-        gamma_0 = self.gamma(zeros)
-        # Computes sqrt(sigma_0^2 / alpha_0^2)
-        sigma = diffusion_utils.SNR(-0.5 * gamma_0).unsqueeze(1)
-        noisy_data = {'X_t': X_0, 'E_t': E_0, 'y_t': y_0, 't': torch.zeros(y_0.shape[0], 1).type_as(y_0)}
-        extra_data = self.compute_extra_data(noisy_data)
-        eps0 = self.forward(noisy_data, extra_data, node_mask)
-
-        # Compute mu for p(zs | zt).
-        sigma_0 = diffusion_utils.sigma(gamma_0, target_shape=eps0.X.size())
-        alpha_0 = diffusion_utils.alpha(gamma_0, target_shape=eps0.X.size())
-
-        pred_X = 1. / alpha_0 * (X_0 - sigma_0 * eps0.X)
-        pred_E = 1. / alpha_0.unsqueeze(1) * (E_0 - sigma_0.unsqueeze(1) * eps0.E)
-        pred_y = 1. / alpha_0.squeeze(1) * (y_0 - sigma_0.squeeze(1) * eps0.y)
-        assert (pred_E == torch.transpose(pred_E, 1, 2)).all()
-
-        sampled = diffusion_utils.sample_normal(pred_X, pred_E, pred_y, sigma, node_mask).type_as(pred_X)
-        assert (sampled.E == torch.transpose(sampled.E, 1, 2)).all()
-
-        # The 'unnormalize' function is not defined and seems to be a leftover.
-        # The goal is to convert the continuous predictions to discrete class indices.
-        # The `mask` method with `collapse=True` performs this by taking argmax.
-        sampled.mask(node_mask, collapse=True)
-        return sampled
 
     def forward(self, noisy_data, extra_data, node_mask):
         """ Concatenates extra data to the noisy data, then calls the network. """
@@ -250,21 +240,22 @@ class DDPM(nn.Module):
         # 2. Sample noisy graph Gt (corruption process)
         alpha_bar = self.alpha_cumprod.to(X_0.device)[t]  # (bs,)
 
-        # Sample uniform noise for corruption
-        # The user specified transition matrices imply sampling from a stationary distribution
-        # for the corruption part.
-        limit_dist_X = self.limit_dist_X.to(X_0.device)
-        X_random = torch.multinomial(limit_dist_X.expand(X_0.numel(), -1), 1).view(X_0.shape)
+        # Compute cumulative transition matrices Qt_bar
+        Qtb_X = self.get_Q(alpha_bar, self.limit_dist_X.to(X_0.device))
+        Qtb_E = self.get_Q(alpha_bar, self.limit_dist_E.to(X_0.device))
 
-        limit_dist_E = self.limit_dist_E.to(E_0.device)
-        E_random = torch.multinomial(limit_dist_E.expand(E_0.numel(), -1), 1).view(E_0.shape)
+        # Node corruption: sample from q(X_t | X_0) = X_0 @ Qt_bar
+        prob_X = torch.bmm(F.one_hot(X_0, num_classes=self.Xdim).float(), Qtb_X)
+        X_t = torch.multinomial(prob_X.view(-1, self.Xdim), 1).view(bs, n_max)
 
-        # Create corruption masks. Where mask is True, we replace with random noise.
-        mask_X = torch.rand(X_0.shape, device=X_0.device) > alpha_bar.view(bs, 1)
-        mask_E = torch.rand(E_0.shape, device=E_0.device) > alpha_bar.view(bs, 1, 1)
+        # Edge corruption: sample from q(E_t | E_0) = E_0 @ Qt_bar
+        E_0_flat = F.one_hot(E_0, num_classes=self.Edim).float().view(bs, n_max * n_max, self.Edim)
+        prob_E = torch.bmm(E_0_flat, Qtb_E)
+        E_t = torch.multinomial(prob_E.view(-1, self.Edim), 1).view(bs, n_max, n_max)
 
-        X_t = torch.where(mask_X, X_random, X_0)
-        E_t = torch.where(mask_E, E_random, E_0)
+        # Ensure symmetric edges (undirected graphs) and 0 on diagonal
+        E_t = torch.triu(E_t, diagonal=1)
+        E_t = E_t + E_t.transpose(1, 2)
 
         # 3. & 4. Predict logits for original graph features using the network
         # The network needs one-hot encoded features.

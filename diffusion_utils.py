@@ -360,6 +360,9 @@ def posterior_distributions(X, E, y, X_t, E_t, y_t, Qt, Qsb, Qtb):
     prob_X = compute_posterior_distribution(M=X, M_t=X_t, Qt_M=Qt.X, Qsb_M=Qsb.X, Qtb_M=Qtb.X)   # (bs, n, dx)
     prob_E = compute_posterior_distribution(M=E, M_t=E_t, Qt_M=Qt.E, Qsb_M=Qsb.E, Qtb_M=Qtb.E)   # (bs, n * n, de)
 
+    bs, n = X.shape[0], X.shape[1]
+    prob_E = prob_E.reshape(bs, n, n, -1)
+
     return PlaceHolder(X=prob_X, E=prob_E, y=y_t)
 
 
@@ -392,5 +395,3 @@ def sample_discrete_feature_noise(limit_dist, node_mask):
     assert (U_E == torch.transpose(U_E, 1, 2)).all()
 
     return PlaceHolder(X=U_X, E=U_E, y=U_y).mask(node_mask)
-
-

@@ -36,7 +36,7 @@ parser.add_argument('--lr', type=float, default=1e-3, metavar='V', help='learnin
 parser.add_argument('--num-hidden', type=int, default=128, help='Number of hidden units (default: %(default)s)')
 parser.add_argument('--n-layers', type=int, default=4, help='Number of transformer layers (default: %(default)s)')
 parser.add_argument('--network-type', type=str, default='GraphTransformer', choices=MODEL_REGISTRY.keys(), help='Choose the network type (default: %(default)s)')
-parser.add_argument('--T', type=int, default=1000, metavar='V', help='Number of steps in the diffusion process (default: %(default)s)')
+parser.add_argument('--T', type=int, default=100, metavar='V', help='Number of steps in the diffusion process (default: %(default)s)')
 
 
 args = parser.parse_args()

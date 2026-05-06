@@ -123,6 +123,7 @@ elif args.mode == 'sample':
         model = load_model(args.model_path, args.device)
     else :
         raise ValueError(f"No model provided")
+    model.eval()
     
     all_generated_adj_matrices = []
 
@@ -165,6 +166,7 @@ elif args.mode == 'stats':
         model = load_model(args.model_path, args.device)
     else :
         raise ValueError(f"No model provided")
+    model.eval()
     
     generated_adj_matrices = []
     for i in tqdm(range(num_rounds), desc="Generating model samples"):
@@ -263,4 +265,3 @@ elif args.mode == 'hyperparameter_search':
     print("\n--- Hyperparameter Search Complete ---")
     print(f"Best Quality Score: {best_quality_score:.4f}")
     print(f"Best Hyperparameters: {best_hparams}")
-

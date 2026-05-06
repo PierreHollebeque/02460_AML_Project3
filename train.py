@@ -81,4 +81,4 @@ def train(model, optimizer, data_loader, epochs, device, plot_loss=False, schedu
         ax.legend()
         fig.savefig('loss.png')
 
-    return loss_train
+    return loss_train, loss_epoch

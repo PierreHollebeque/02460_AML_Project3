@@ -68,7 +68,7 @@ parser.add_argument('--model-path', type=str, default='model.pt', help='file to 
 parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda', 'mps'], help='torch device (default: %(default)s)')
 
 parser.add_argument('--sample-view', type=str, default='samples.png', help='file to save samples in (default: %(default)s)')
-parser.add_argument('--num-sample', type=int, default=1, metavar='N', help='number of samples to perform (default: %(default)s)')
+parser.add_argument('--num-sample', type=int, default=1, metavar='N', help='number of samples to perform (used for sampling and stats) (default: %(default)s)')
 
 parser.add_argument('--batch-size', type=int, default=32, metavar='N', help='batch size for training and sampling (default: %(default)s)')
 
@@ -78,7 +78,7 @@ parser.add_argument('--lr', type=float, default=1e-3, metavar='V', help='learnin
 parser.add_argument('--num-hidden', type=int, default=128, help='Number of hidden units (default: %(default)s)')
 parser.add_argument('--n-layers', type=int, default=4, help='Number of transformer layers (default: %(default)s)')
 parser.add_argument('--network-type', type=str, default='GraphTransformer', choices=MODEL_REGISTRY.keys(), help='Choose the network type (default: %(default)s)')
-parser.add_argument('--T', type=int, default=100, metavar='V', help='Number of steps in the diffusion process (default: %(default)s)')
+parser.add_argument('--T', type=int, default=128, metavar='V', help='Number of steps in the diffusion process (default: %(default)s)')
 
 parser.add_argument('--hparams-search-file', type=str, default='params.json', help='file containing all the hyperparameters combinations to search over (default: %(default)s)')
 
@@ -101,7 +101,7 @@ num_rounds = (total_samples + batch_size - 1) // batch_size
 
 
 if args.mode == 'train':
-    if args.model_path :
+    if args.model_path and os.path.exists(args.model_path): # Check if model_path exists
         model = load_model(args.model_path, args.device)
     else :
         x_sample = train_set[0] if not isinstance(train_set[0], (list, tuple)) else train_set[0][0]
@@ -119,7 +119,7 @@ if args.mode == 'train':
     save_model(model, args.model_path)
 
 elif args.mode == 'sample':
-    if args.model_path :
+    if args.model_path and os.path.exists(args.model_path):
         model = load_model(args.model_path, args.device)
     else :
         raise ValueError(f"No model provided")
@@ -155,13 +155,13 @@ elif args.mode == 'baseline':
 
 elif args.mode == 'stats':
     from baseline import generate_ER_baseline
-    from evaluate import compare_graphs_generation
+    from evaluate import compare_graphs_generation, plot_statistics
 
     print("Generating baseline graphs...")
     baseline_adj_matrices = generate_ER_baseline(all_n, r_map, num_graphs=args.num_sample)
 
     print(f"Generating {total_samples} model graphs in batches of {batch_size}...")
-    if args.model_path :
+    if args.model_path and os.path.exists(args.model_path):
         model = load_model(args.model_path, args.device)
     else :
         raise ValueError(f"No model provided")
@@ -183,10 +183,12 @@ elif args.mode == 'stats':
 
     print("Computing stats...")
     compare_graphs_generation(generated_adj_matrices, baseline_adj_matrices, train_set)
-
+    print('Plot statistics')
+    plot_statistics(baseline_adj_matrices, generated_adj_matrices,train_set)
 
 elif args.mode == 'hyperparameter_search':
     import itertools,json
+    from evaluate import hashes # Import the hashing function
     
     with open(args.hparams_search_file, 'r') as f:
         hparam_grid = json.load(f)
@@ -195,9 +197,14 @@ elif args.mode == 'hyperparameter_search':
     num_hidden_values = hparam_grid.get("num_hidden", [args.num_hidden])
     n_layers_values = hparam_grid.get("n_layers", [args.n_layers])
 
-    best_loss = float('inf')
+    # We will now optimize for a generation quality metric instead of loss
+    best_quality_score = -1.0 
     best_hparams = {}
     all_loss_curves = []
+
+    # Pre-compute train set hashes for novelty calculation
+    train_wl_hashes = hashes(train_set, graph_type='geometric')
+    train_set_hashes = set(train_wl_hashes)
 
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
 
@@ -218,33 +225,42 @@ elif args.mode == 'hyperparameter_search':
         optimizer = torch.optim.Adam(model.parameters(), lr=current_args.lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
 
-        current_loss_epochs = train(model, optimizer, train_loader, current_args.epochs, current_args.device, scheduler)
+        _,_  = train(model, optimizer, train_loader, current_args.epochs, current_args.device, scheduler)
         
-        if current_loss:
-            all_loss_curves.append((current_loss, {'T': T, 'num_hidden': num_hidden, 'n_layers': n_layers}))
-            final_loss = current_loss[-1]
+        # --- Evaluation Step ---
+        print("  > Generating samples for evaluation...")
+        model.eval() # Set model to evaluation mode
+        num_eval_samples = 32 # Use a smaller number for faster search
+        
+        n_sampled_batch = np.random.choice(all_n, size=num_eval_samples, replace=True)
+        n_nodes_tensor = torch.tensor(n_sampled_batch, device=current_args.device)
 
-        print(f"HParams: T={T}, num_hidden={num_hidden}, n_layers={n_layers} -> Final Loss: {final_loss:.4f}")
+        _, E_batch, _ = model.sample(n_nodes=n_nodes_tensor)
 
-        if final_loss < best_loss:
-            best_loss = final_loss
+        adj_matrix_batch = (E_batch > 0).int()
+        generated_adj_matrices = []
+        for j in range(num_eval_samples):
+            actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]
+            generated_adj_matrices.append(actual_adj)
+
+        # Calculate novelty and uniqueness
+        gen_wl_hashes = hashes(generated_adj_matrices, graph_type='adjacency_matrix')
+        gen_set = set(gen_wl_hashes)
+        gen_novelty = sum(h not in train_set_hashes for h in gen_wl_hashes) / len(gen_wl_hashes) if len(gen_wl_hashes) > 0 else 0.0
+        gen_uniqueness = len(gen_set) / len(gen_wl_hashes) if len(gen_wl_hashes) > 0 else 0.0
+        
+        # Use a combined score for optimization, e.g., the product of novelty and uniqueness
+        quality_score = gen_novelty * gen_uniqueness
+
+        print(f"HParams: T={T}, num_hidden={num_hidden}, n_layers={n_layers} -> Quality Score (Novelty*Uniqueness): {quality_score:.4f}")
+
+        if quality_score > best_quality_score:
+            best_quality_score = quality_score
             best_hparams = {'T': T, 'num_hidden': num_hidden, 'n_layers': n_layers}
+            # Optionally save the best model
+            save_model(model, "best_hparam_model.pt")
 
     print("\n--- Hyperparameter Search Complete ---")
-    print(f"Best Loss: {best_loss:.4f}")
+    print(f"Best Quality Score: {best_quality_score:.4f}")
     print(f"Best Hyperparameters: {best_hparams}")
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    for loss_curve, hparams in all_loss_curves:
-        label = f"T={hparams['T']}, H={hparams['num_hidden']}, L={hparams['n_layers']}"
-        ax.plot(loss_curve, label=label, marker='o', linestyle='-') # Added marker and linestyle
-
-    ax.set_title('Hyperparameter Search: Training Loss Curves')
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Average Epoch Loss')
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    ax.grid(True)
-    plt.tight_layout()
-    plot_filename = 'hparam_loss_curves.png'
-    fig.savefig(plot_filename)
-    print(f"All loss curves plotted and saved to {plot_filename}")

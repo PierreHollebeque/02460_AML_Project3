@@ -37,6 +37,12 @@ def train(model, optimizer, data_loader, epochs, device, plot_loss=False, schedu
             graph = graph.to(device)
             optimizer.zero_grad()
             loss = model.loss(graph)
+            
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f"Warning: Loss is NaN or Inf at epoch {epoch+1}, step {progress_bar.n % len(data_loader)}. Skipping this step and marking epoch loss as NaN.")
+                epoch_loss = float('nan') # Mark epoch loss as NaN if any step produces NaN/Inf
+                break # Break from inner loop, this epoch is tainted
+
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
@@ -46,12 +52,17 @@ def train(model, optimizer, data_loader, epochs, device, plot_loss=False, schedu
             progress_bar.set_postfix(loss=f"⠀{loss.item():12.4f}", epoch=f"{epoch+1}/{epochs}")
             progress_bar.update()
             
-        loss_epoch.append(epoch_loss / len(data_loader))
+        if not torch.isnan(torch.tensor(epoch_loss)): # Only append if epoch_loss is not NaN
+            avg_epoch_loss = epoch_loss / len(data_loader)
+            loss_epoch.append(avg_epoch_loss)
+        else:
+            loss_epoch.append(float('nan')) # Append NaN if epoch was tainted
+            print(f"Epoch {epoch+1} average loss: NaN (due to NaN/Inf in step loss)")
         
         if scheduler is not None:
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                avg_epoch_loss = epoch_loss / len(data_loader)
-                scheduler.step(avg_epoch_loss)
+                scheduler_loss = avg_epoch_loss if not torch.isnan(torch.tensor(avg_epoch_loss)) else float('inf')
+                scheduler.step(scheduler_loss)
             else:
                 scheduler.step()
     
@@ -70,4 +81,4 @@ def train(model, optimizer, data_loader, epochs, device, plot_loss=False, schedu
         ax.legend()
         fig.savefig('loss.png')
 
-    return loss_epoch
+    return loss_train

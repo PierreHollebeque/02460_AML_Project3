@@ -220,11 +220,9 @@ elif args.mode == 'hyperparameter_search':
 
         current_loss_epochs = train(model, optimizer, train_loader, current_args.epochs, current_args.device, scheduler)
         
-        if current_loss_epochs:
-            final_loss = current_loss_epochs[-1]
-            all_loss_curves.append((current_loss_epochs, {'T': T, 'num_hidden': num_hidden, 'n_layers': n_layers}))
-        else:
-            final_loss = float('inf')
+        if current_loss:
+            all_loss_curves.append((current_loss, {'T': T, 'num_hidden': num_hidden, 'n_layers': n_layers}))
+            final_loss = current_loss[-1]
 
         print(f"HParams: T={T}, num_hidden={num_hidden}, n_layers={n_layers} -> Final Loss: {final_loss:.4f}")
 
@@ -239,7 +237,7 @@ elif args.mode == 'hyperparameter_search':
     fig, ax = plt.subplots(figsize=(10, 6))
     for loss_curve, hparams in all_loss_curves:
         label = f"T={hparams['T']}, H={hparams['num_hidden']}, L={hparams['n_layers']}"
-        ax.plot(loss_curve, label=label)
+        ax.plot(loss_curve, label=label, marker='o', linestyle='-') # Added marker and linestyle
 
     ax.set_title('Hyperparameter Search: Training Loss Curves')
     ax.set_xlabel('Epoch')

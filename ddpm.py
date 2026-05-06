@@ -248,7 +248,11 @@ class DDPM(nn.Module):
 
         # 5. Compute masked Cross-Entropy Loss
         loss_X = F.cross_entropy(pred_X_logits.view(-1, self.Xdim_output), X_0.view(-1), reduction='none')
-        loss_X = (loss_X * node_mask.view(-1).float()).sum() / (node_mask.sum() + 1e-8)
+        node_mask_sum = node_mask.sum().float()
+        if node_mask_sum > 0:
+            loss_X = (loss_X * node_mask.view(-1).float()).sum() / node_mask_sum
+        else:
+            loss_X = torch.tensor(0.0, device=X_0.device) # No nodes, no node loss
 
         # Evaluate edge loss only within existing nodes and strictly off-diagonal
         edge_mask = node_mask.unsqueeze(1) * node_mask.unsqueeze(2)
@@ -256,6 +260,10 @@ class DDPM(nn.Module):
         edge_mask = edge_mask * diag_mask
 
         loss_E = F.cross_entropy(pred_E_logits.view(-1, self.Edim_output), E_0.view(-1), reduction='none')
-        loss_E = (loss_E * edge_mask.view(-1).float()).sum() / (edge_mask.sum() + 1e-8)
+        edge_mask_sum = edge_mask.sum().float()
+        if edge_mask_sum > 0:
+            loss_E = (loss_E * edge_mask.view(-1).float()).sum() / edge_mask_sum
+        else:
+            loss_E = torch.tensor(0.0, device=X_0.device) # No edges, no edge loss
 
         return loss_X + lambda_E * loss_E

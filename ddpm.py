@@ -241,9 +241,9 @@ class DDPM(nn.Module):
         X_t_onehot = F.one_hot(X_t, num_classes=self.Xdim).float()
         E_t_onehot = F.one_hot(E_t, num_classes=self.Edim).float()
 
-        # Cast diffusion timestep for network input conditioning
-        t_float = t.float().unsqueeze(-1)
-        pred = self.network(X_t_onehot, E_t_onehot, t_float, node_mask)
+        # Cast and normalize diffusion timestep for network input conditioning
+        t_norm = t.float().unsqueeze(-1) / self.T
+        pred = self.network(X_t_onehot, E_t_onehot, t_norm, node_mask)
         pred_X_logits, pred_E_logits = pred.X, pred.E
 
         # 5. Compute masked Cross-Entropy Loss

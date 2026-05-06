@@ -126,29 +126,60 @@ def plot_view(train_set,all_generated_adj_matrices,sample_view):
     from torch_geometric.utils import to_networkx
     import matplotlib.pyplot as plt
     import numpy as np
-
+    # Define a color map for different edge types. 
+    # Types usually map to: 1=Single, 2=Double, 3=Triple, 4=Aromatic etc.
     
     num_plot = min(len(all_generated_adj_matrices), 4)
     if num_plot > 0:
         fig, axes = plt.subplots(num_plot, 2, figsize=(10, 5 * num_plot))
         axes = np.array(axes).reshape(num_plot, 2) # Ensure 2D format to avoid subscript errors
-        
+        edge_colors_map = {1: 'black', 2: 'red', 3: 'blue', 4: 'green', 5: 'orange', 6: 'purple'}
+
         for i in range(num_plot):
             # Train set example (left column)
             train_data = train_set[i] if not isinstance(train_set[i], (list, tuple)) else train_set[i][0]
-            train_nx = to_networkx(train_data, to_undirected=True)
+            has_edge_attr = hasattr(train_data, 'edge_attr') and train_data.edge_attr is not None
+            train_nx = to_networkx(train_data, edge_attrs=['edge_attr'] if has_edge_attr else None, to_undirected=True)
             
+            # Remove isolated nodes (nodes with no edges)
+            train_nx.remove_nodes_from(list(nx.isolates(train_nx)))
+            
+            train_edge_colors = []
+            for u, v, data in train_nx.edges(data=True):
+                if 'edge_attr' in data and data['edge_attr'] is not None:
+                    attr = data['edge_attr']
+                    # Retrieve original class integer from one-hot encoding (+1 for class mapping)
+                    if isinstance(attr, (list, tuple)):
+                        edge_type = np.argmax(attr) + 1
+                    elif hasattr(attr, 'numpy'):
+                        edge_type = torch.argmax(attr).item() + 1
+                    elif isinstance(attr, np.ndarray):
+                        edge_type = np.argmax(attr) + 1
+                    else:
+                        edge_type = int(attr)
+                    train_edge_colors.append(edge_colors_map.get(edge_type, 'gray'))
+                else:
+                    train_edge_colors.append('black')
+                
             # Generated example (right column)
             gen_adj = all_generated_adj_matrices[i].cpu().numpy()
             gen_nx = nx.from_numpy_array(gen_adj)
             
+            # Remove isolated nodes (nodes with no edges)
+            gen_nx.remove_nodes_from(list(nx.isolates(gen_nx)))
+            
+            gen_edge_colors = []
+            for u, v, data in gen_nx.edges(data=True):
+                edge_type = int(data.get('weight', 1))
+                gen_edge_colors.append(edge_colors_map.get(edge_type, 'black'))
+                
             axes[i, 0].set_title(f'Train Sample {i+1}')
-            pos_train = nx.spring_layout(train_nx, seed=42)
-            nx.draw(train_nx, pos=pos_train, ax=axes[i, 0], node_size=100, node_color='#1f78b4', edgecolors='black', edge_color='gray', width=1.5)
+            pos_train = nx.spring_layout(train_nx)
+            nx.draw(train_nx, pos_train, ax=axes[i, 0], node_size=50, node_color='#1f78b4', 
+                    edge_color=train_edge_colors if train_edge_colors else 'black', width=2.0)
             
             axes[i, 1].set_title(f'Generated Sample {i+1}')
-            pos_gen = nx.spring_layout(gen_nx, seed=42)
-            nx.draw(gen_nx, pos=pos_gen, ax=axes[i, 1], node_size=100, node_color='#d62728', edgecolors='black', edge_color='gray', width=1.5)
+            nx.draw(gen_nx, ax=axes[i, 1], node_size=50, node_color='#d62728', edge_color='gray')
             
         plt.tight_layout()
         plt.savefig(sample_view)

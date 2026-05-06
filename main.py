@@ -150,7 +150,8 @@ elif args.mode == 'sample':
 
         X_batch, E_batch, y_batch = model.sample(n_nodes=n_nodes_tensor)
 
-        adj_matrix_batch = (E_batch > 0).int()
+        # Keep the original categorical integer classes to visualize edge types in samples
+        adj_matrix_batch = E_batch.int()
         for j in range(current_batch_size):
             actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]
             all_generated_adj_matrices.append(actual_adj)

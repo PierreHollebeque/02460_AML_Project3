@@ -68,7 +68,7 @@ parser.add_argument('--model-path', type=str, default='model.pt', help='file to 
 parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda', 'mps'], help='torch device (default: %(default)s)')
 
 parser.add_argument('--sample-view', type=str, default='samples.png', help='file to save samples in (default: %(default)s)')
-parser.add_argument('--num-sample', type=int, default=1, metavar='N', help='number of samples to perform (used for sampling and stats) (default: %(default)s)')
+parser.add_argument('--num-sample', type=int, default=4, metavar='N', help='number of samples to perform (used for sampling and stats) (default: %(default)s)')
 
 parser.add_argument('--batch-size', type=int, default=32, metavar='N', help='batch size for training and sampling (default: %(default)s)')
 

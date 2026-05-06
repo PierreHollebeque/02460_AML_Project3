@@ -71,6 +71,11 @@ def create_model(train_set, args):
 
     T = args.T
     model = DDPM(network, dataset_infos=dataset_infos, device=args.device, T=T, schedule=args.schedule, lambda_E=args.lambda_E).to(args.device)
+
+    # Diagnostic: Check if T is large enough for the schedule
+    alpha_cumprod_T = model.alpha_cumprod[-1].item()
+    print(f"Diagnostic: For T={T} and schedule='{args.schedule}', alpha_cumprod at T is {alpha_cumprod_T:.6f}")
+
     return model
 
 

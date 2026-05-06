@@ -4,6 +4,7 @@ import torch
 import os, sys
 
 
+
 class PlaceHolder:
     def __init__(self, X, E, y):
         self.X = X
@@ -35,7 +36,7 @@ class PlaceHolder:
         return self
 
 
-class DummyDatasetInfos:
+class DatasetInfos:
     """
     A placeholder for dataset information. It holds dimensions and distributions
     of node, edge, and global features, compatible with the model's expectations.

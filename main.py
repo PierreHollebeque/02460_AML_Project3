@@ -1,37 +1,79 @@
-import torch
+import torch, numpy as np
 import sys, os
 import argparse
 
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 from train import train
-from ddpm import DDPM
 from network import MODEL_REGISTRY
 from baseline import compute_empirical_distribution
 from torch_geometric.loader import DataLoader
-from utils import load_dataset, load_model, save_model, DummyDatasetInfos
+from utils import load_dataset, load_model, save_model, DatasetInfos
+from network import MODEL_REGISTRY
+from ddpm import DDPM
 
-    
-current_script_dir = os.path.dirname(os.path.abspath(__file__))
+
+
 # Add project root to sys.path to ensure modules like 'utils' are found
+current_script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root_dir = os.path.dirname(current_script_dir)
 sys.path.append(project_root_dir)
 
-# HACK: This is to ensure that models saved when DummyDatasetInfos was defined
-# in `main` can be loaded now that the class has been moved to `utils.py`.
-# It maps the old location ('main.DummyDatasetInfos') to the new one for pickle.
-sys.modules['__main__'].DummyDatasetInfos = DummyDatasetInfos
+
+def create_model(x_sample, args):
+    # --- Start of changes for DDPM compatibility ---
+    node_feature_dim = x_sample.x.shape[1]
+    # Add + 1 to edge_feature_dim to integrate the "no edge" class
+    edge_feature_dim = x_sample.edge_attr.shape[1] + 1
+    global_feature_dim = 1
+
+    # Placeholder for stationary distributions (should be computed from training data)
+    # For discrete features, these are typically uniform or empirical distributions.
+    dummy_node_dist = torch.ones(node_feature_dim) / node_feature_dim
+    dummy_edge_dist = torch.ones(edge_feature_dim) / edge_feature_dim
+
+    dataset_infos = DatasetInfos(
+        node_feature_dim, edge_feature_dim, global_feature_dim,
+        dummy_node_dist, dummy_edge_dist
+    )
+
+    # Define the network
+    network_type = args.network_type
+    if network_type == 'GraphTransformer':
+        hidden_mlp_dims = {'X': args.num_hidden * 2, 'E': args.num_hidden, 'y': args.num_hidden}
+        hidden_dims = {'dx': args.num_hidden, 'de': args.num_hidden // 2, 'dy': args.num_hidden // 2, 'n_head': 4, 'dim_ffX': args.num_hidden, 'dim_ffE': args.num_hidden}
+        network = MODEL_REGISTRY[network_type](
+            n_layers=args.n_layers,
+            input_dims=dataset_infos.input_dims,
+            output_dims=dataset_infos.output_dims,
+            hidden_mlp_dims=hidden_mlp_dims,
+            hidden_dims=hidden_dims,
+            act_fn_in=torch.nn.ReLU(),
+            act_fn_out=torch.nn.ReLU()
+        )
+    else:
+        raise ValueError(f"Unsupported network type: {network_type}. Check registration in network.py")
+
+    # Set the number of steps in the diffusion process
+    T = args.T
+    # Define model
+    model = DDPM(network, dataset_infos=dataset_infos, device=args.device, T=T).to(args.device)
+    return model
+
 
 # Parse arguments
 
 parser = argparse.ArgumentParser()
-parser.add_argument('mode', type=str, default='train', choices=['train', 'sample', 'test','baseline','stats'], help='what to do when running the script (default: %(default)s)')
+parser.add_argument('mode', type=str, default='train', choices=['train', 'sample', 'hyperparameter_search','baseline','stats'], help='what to do when running the script (default: %(default)s)')
 
 parser.add_argument('--model-path', type=str, default='model.pt', help='file to save model to or load model from (default: %(default)s)')
 parser.add_argument('--device', type=str, default='cpu', choices=['cpu', 'cuda', 'mps'], help='torch device (default: %(default)s)')
 
-parser.add_argument('--sample-path', type=str, default='samples.png', help='file to save samples in (default: %(default)s)')
+parser.add_argument('--sample-view', type=str, default='samples.png', help='file to save samples in (default: %(default)s)')
 parser.add_argument('--num-sample', type=int, default=1, metavar='N', help='number of samples to perform (default: %(default)s)')
 
-parser.add_argument('--batch-size', type=int, default=32, metavar='N', help='batch size for training (default: %(default)s)')
+parser.add_argument('--batch-size', type=int, default=32, metavar='N', help='batch size for training and sampling (default: %(default)s)')
+
 parser.add_argument('--epochs', type=int, default=1, metavar='N', help='number of epochs to train (default: %(default)s)')
 parser.add_argument('--lr', type=float, default=1e-3, metavar='V', help='learning rate for training (default: %(default)s)')
 
@@ -40,74 +82,38 @@ parser.add_argument('--n-layers', type=int, default=4, help='Number of transform
 parser.add_argument('--network-type', type=str, default='GraphTransformer', choices=MODEL_REGISTRY.keys(), help='Choose the network type (default: %(default)s)')
 parser.add_argument('--T', type=int, default=100, metavar='V', help='Number of steps in the diffusion process (default: %(default)s)')
 
+parser.add_argument('--hparams-search-file', type=str, default='params.json', help='file containing all the hyperparameters combinations to search over (default: %(default)s)')
 
 args = parser.parse_args()
 print('# Options')
 for key, value in sorted(vars(args).items()):
     print(key, '=', value)
-
+print()
 
 # Load data
-train_set, val_set, test_set = load_dataset()
+train_set, _, _ = load_dataset()
 
-if args.model_path :
-    model = load_model(args.model_path, args.device)
-else :
-    model = None
+# 1. Analyze training data
+all_n, r_map = compute_empirical_distribution(train_set)
 
+print('Mean nodes : ', np.mean(all_n))
+print('Std nodes : ', np.std(all_n))
+
+# 1.0 Compute sampling sizes
+total_samples = args.num_sample
+batch_size = args.batch_size
+num_rounds = (total_samples + batch_size - 1) // batch_size # Calculate number of rounds needed
 
 
 # Choose mode to run
 if args.mode == 'train':
-    if not model:
-        x_sample = train_set[0]
-        if isinstance(x_sample, (list, tuple)):
-            x_sample = x_sample[0]
-
-        # --- Start of changes for DDPM compatibility ---
-        # Define dataset_infos required by DDPM.
-        # These dimensions and distributions need to be properly derived from your dataset.
-        # For MUTAG, x_sample.x.shape[1] is typically the node feature dimension (e.g., 7 for atom types).
-        # Edge features (E) and global features (y) need to be determined from the dataset structure.
-        # Assuming for MUTAG:
-        node_feature_dim = x_sample.x.shape[1]
-        # Add + 1 to edge_feature_dim to integrate the "no edge" class
-        edge_feature_dim = x_sample.edge_attr.shape[1] + 1
-        # The 'y' feature will be used to pass the timestep t. It's a single scalar.
-        global_feature_dim = 1
-
-        # Placeholder for stationary distributions (should be computed from training data)
-        # For discrete features, these are typically uniform or empirical distributions.
-        dummy_node_dist = torch.ones(node_feature_dim) / node_feature_dim
-        dummy_edge_dist = torch.ones(edge_feature_dim) / edge_feature_dim
-
-        dataset_infos = DummyDatasetInfos(
-            node_feature_dim, edge_feature_dim, global_feature_dim,
-            dummy_node_dist, dummy_edge_dist
-        )
-
-        # Define the network
-        network_type = args.network_type
-        if network_type == 'GraphTransformer':
-            hidden_mlp_dims = {'X': args.num_hidden * 2, 'E': args.num_hidden, 'y': args.num_hidden}
-            hidden_dims = {'dx': args.num_hidden, 'de': args.num_hidden // 2, 'dy': args.num_hidden // 2, 'n_head': 4, 'dim_ffX': args.num_hidden, 'dim_ffE': args.num_hidden}
-            network = MODEL_REGISTRY[network_type](
-                n_layers=args.n_layers,
-                input_dims=dataset_infos.input_dims,
-                output_dims=dataset_infos.output_dims,
-                hidden_mlp_dims=hidden_mlp_dims,
-                hidden_dims=hidden_dims,
-                act_fn_in=torch.nn.ReLU(),
-                act_fn_out=torch.nn.ReLU()
-            )
-        else:
-            raise ValueError(f"Unsupported network type: {network_type}. Check registration in network.py")
-
-        # Set the number of steps in the diffusion process
-        T = args.T
+    if args.model_path :
+        model = load_model(args.model_path, args.device)
+    else :
+        x_sample = train_set[0] if not isinstance(train_set[0], (list, tuple)) else train_set[0][0]
         # Define model
-        model = DDPM(network, dataset_infos=dataset_infos, device=args.device, T=T).to(args.device)
-        # --- End of changes for DDPM compatibility ---
+        model = create_model(x_sample, args).to(args.device)
+        
 
 
     # Define optimizer
@@ -119,40 +125,159 @@ if args.mode == 'train':
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
 
     # Train model
-    train(model, optimizer, train_loader, args.epochs, args.device, scheduler)
+    train(model, optimizer, train_loader, args.epochs, args.device, plot_loss=True, scheduler)
 
     # Save model
     save_model(model, args.model_path)
 
-elif args.mode == 'test':
-    if not model:
-        raise ValueError(f"No model provided")
-    raise NotImplementedError(f"Module not implemented")
-
-
 elif args.mode == 'sample':
-
-    import numpy as np
-
-    if not model:
+    if args.model_path :
+        model = load_model(args.model_path, args.device)
+    else :
         raise ValueError(f"No model provided")
     
-    all_n, _ = compute_empirical_distribution(train_set)
-    # Sample several graphs with a number of nodes from the empirical distribution
-    n_sampled = np.random.choice(all_n,size=args.num_sample, replace=True)
-    n_nodes = torch.tensor(n_sampled, device=args.device)
-    print(f"Sampling a graph with {n_sampled} nodes...")
-    X, E, y = model.sample(n_nodes=n_nodes)
+    all_generated_adj_matrices = []
+
+    print(f"Sampling {total_samples} graphs in batches of {batch_size}...")
+    for i in tqdm(range(num_rounds), desc="Generating samples"):
+        current_batch_size = min(batch_size, total_samples - i * batch_size)
+        if current_batch_size == 0:
+            break
+
+        # Sample n_nodes for the current batch
+        n_sampled_batch = np.random.choice(all_n, size=current_batch_size, replace=True)
+        n_nodes_tensor = torch.tensor(n_sampled_batch, device=args.device)
+
+        # Perform sampling
+        X_batch, E_batch, y_batch = model.sample(n_nodes=n_nodes_tensor)
 
     # The returned E is a group of dense matrix with categorical edge types (0 means no edge).
     # We create a binary adjacency matrix from the first sample in the batch.
-    adj_matrix = (E > 0).int()
-    for i in range(args.num_sample):  
-        print(f"Generated Adjacency Matrix (sample {i}):")
-        print(adj_matrix[i,:n_nodes[i],:n_nodes[i]])
+        adj_matrix_batch = (E_batch > 0).int()
+        for j in range(current_batch_size):
+            actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]
+            all_generated_adj_matrices.append(actual_adj)
+
+    # Print all generated adjacency matrices
+    for idx, adj in enumerate(all_generated_adj_matrices):
+        print(f"\nGenerated Adjacency Matrix (sample {idx+1}) - shape : {adj.shape}")
+        print(adj)
 
 elif args.mode == 'baseline':
-    raise NotImplementedError(f"Module not implemented")
+    from baseline import generate_ER_baseline
+    # 2. Generate baseline graphs
+    adj_matrices = generate_ER_baseline(all_n, r_map, num_graphs=args.num_sample)
+    for i in range(args.num_sample):  
+        print(f"Generated Adjacency Matrix (sample {i}) - shape : {adj_matrices[i].shape}")
+        print(adj_matrices[i])
 
 elif args.mode == 'stats':
-    raise NotImplementedError(f"Module not implemented")
+    from baseline import generate_ER_baseline
+    from evaluate import compare_graphs_generation
+
+    # 2. Generate baseline graphs
+    print("Generating baseline graphs...")
+    baseline_adj_matrices = generate_ER_baseline(all_n, r_map, num_graphs=args.num_sample)
+
+    # 3. Generate model graphs
+    print(f"Generating {total_samples} model graphs in batches of {batch_size}...")
+    if args.model_path :
+        model = load_model(args.model_path, args.device)
+    else :
+        raise ValueError(f"No model provided")
+    
+    generated_adj_matrices = []
+    for i in tqdm(range(num_rounds), desc="Generating model samples"):
+        current_batch_size = min(batch_size, total_samples - i * batch_size)
+        if current_batch_size == 0:
+            break
+
+        n_sampled_batch = np.random.choice(all_n, size=current_batch_size, replace=True)
+        n_nodes_tensor = torch.tensor(n_sampled_batch, device=args.device)
+        _, E_batch, _ = model.sample(n_nodes=n_nodes_tensor)
+
+        adj_matrix_batch = (E_batch > 0).int()
+        for j in range(current_batch_size):
+            actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]
+            generated_adj_matrices.append(actual_adj)
+
+    # 4. Compute stats
+    print("Computing stats...")
+    compare_graphs_generation(generated_adj_matrices, baseline_adj_matrices, train_set)
+
+
+elif args.mode == 'hyperparameter_search':
+    import itertools,json
+    
+    with open(args.hparams_search_file, 'r') as f:
+        hparam_grid = json.load(f)
+
+    # Extract lists of values for each hyperparameter
+    T_values = hparam_grid.get("T", [args.T])
+    num_hidden_values = hparam_grid.get("num_hidden", [args.num_hidden])
+    n_layers_values = hparam_grid.get("n_layers", [args.n_layers])
+
+    best_loss = float('inf')
+    best_hparams = {}
+    all_loss_curves = [] # To store loss curves for plotting
+
+    # Prepare data loader once
+    train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
+
+    x_sample = train_set[0] if not isinstance(train_set[0], (list, tuple)) else train_set[0][0]
+
+    print("Starting hyperparameter search...")
+    # Iterate over all combinations of hyperparameters
+    for T, num_hidden, n_layers in itertools.product(T_values, num_hidden_values, n_layers_values):
+        print(f"\n--- Testing HParams: T={T}, num_hidden={num_hidden}, n_layers={n_layers} ---")
+
+        # Create a temporary args object or update the existing one
+        # It's safer to create a copy or update specific attributes
+        current_args = argparse.Namespace(**vars(args)) # Create a mutable copy
+        current_args.T = T
+        current_args.num_hidden = num_hidden
+        current_args.n_layers = n_layers
+
+        # Create model with current hyperparameters
+        model = create_model(x_sample, current_args)
+        model.to(current_args.device)
+
+        # Define optimizer and scheduler for the current model
+        optimizer = torch.optim.Adam(model.parameters(), lr=current_args.lr)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
+
+        # Train model and get the final loss
+        # train now returns the list of epoch losses
+        current_loss_epochs = train(model, optimizer, train_loader, current_args.epochs, current_args.device, scheduler)
+        
+        if current_loss_epochs:
+            final_loss = current_loss_epochs[-1]
+            all_loss_curves.append((current_loss_epochs, {'T': T, 'num_hidden': num_hidden, 'n_layers': n_layers}))
+        else:
+            final_loss = float('inf')
+
+        print(f"HParams: T={T}, num_hidden={num_hidden}, n_layers={n_layers} -> Final Loss: {final_loss:.4f}")
+
+        if final_loss < best_loss:
+            best_loss = final_loss
+            best_hparams = {'T': T, 'num_hidden': num_hidden, 'n_layers': n_layers}
+
+    print("\n--- Hyperparameter Search Complete ---")
+    print(f"Best Loss: {best_loss:.4f}")
+    print(f"Best Hyperparameters: {best_hparams}")
+
+    # Plot all loss curves
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for loss_curve, hparams in all_loss_curves:
+        label = f"T={hparams['T']}, H={hparams['num_hidden']}, L={hparams['n_layers']}"
+        ax.plot(loss_curve, label=label)
+
+    ax.set_title('Hyperparameter Search: Training Loss Curves')
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Average Epoch Loss')
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax.grid(True)
+    plt.tight_layout()
+    plot_filename = 'hparam_loss_curves.png'
+    fig.savefig(plot_filename)
+    print(f"All loss curves plotted and saved to {plot_filename}")

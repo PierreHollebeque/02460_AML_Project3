@@ -4,7 +4,7 @@ from torch_geometric.data import Data
 import matplotlib.pyplot as plt
 
 
-def train(model, optimizer, data_loader, epochs, device, scheduler=None):
+def train(model, optimizer, data_loader, epochs, device, plot_loss=False, scheduler=None):
     """
     Train a Flow model.
 
@@ -58,16 +58,19 @@ def train(model, optimizer, data_loader, epochs, device, scheduler=None):
     
 
     # ==PLOT TRAINING LOSS==
-    fig,ax = plt.subplots()
-    ax.plot(loss_train, alpha=0.3, label='Per-step Loss')
-    
-    # Plot average epoch loss
-    steps_per_epoch = len(data_loader)
-    epoch_x = [steps_per_epoch * (i + 0.5) for i in range(epochs)]
-    ax.plot(epoch_x, loss_epoch, color='red', linewidth=2, label='Epoch Avg Loss')
-    
-    ax.grid(True)
-    ax.set_xlabel('Steps')
-    ax.set_ylabel('Training Loss')
-    ax.legend()
-    fig.savefig('loss.png')
+    if plot_loss :
+        fig,ax = plt.subplots()
+        ax.plot(loss_train, alpha=0.3, label='Per-step Loss')
+        
+        # Plot average epoch loss
+        steps_per_epoch = len(data_loader)
+        epoch_x = [steps_per_epoch * (i + 0.5) for i in range(epochs)]
+        ax.plot(epoch_x, loss_epoch, color='red', linewidth=2, label='Epoch Avg Loss')
+        
+        ax.grid(True)
+        ax.set_xlabel('Steps')
+        ax.set_ylabel('Training Loss')
+        ax.legend()
+        fig.savefig('loss.png')
+
+    return loss_epoch

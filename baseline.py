@@ -68,4 +68,4 @@ if __name__ == '__main__':
 
     print(f"Generated {len(adj_matrices)} graphs.")
     print(f"Shape of the first matrix : {adj_matrices[0].shape}")
-    print("Partial content :\n", adj_matrices[0][:5, :5]) # Plot corner 5x5
+    print("First matrix :\n", adj_matrices[0])

@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import diffusion_utils, utils
 import torch.nn.functional as F
+from tqdm import tqdm
 from torch_geometric.data import Data
 from torch_geometric.utils import to_dense_adj, to_dense_batch
 
@@ -128,7 +129,7 @@ class DDPM(nn.Module):
             X, E, y = z_T.X, z_T.E, z_T.y
             
             # Iteratively sample p(z_s | z_t) for t = T-1 down to 0
-            for s_int in reversed(range(0, number_chain_steps)):
+            for s_int in tqdm(reversed(range(0, number_chain_steps)), total=number_chain_steps, desc="Reverse diffusion steps", leave=False):
                 s_array = s_int - 1
 
                 t_array = s_int * torch.ones((batch_size, 1), device=device)

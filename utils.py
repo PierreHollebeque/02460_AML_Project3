@@ -143,10 +143,12 @@ def plot_view(train_set,all_generated_adj_matrices,sample_view):
             gen_nx = nx.from_numpy_array(gen_adj)
             
             axes[i, 0].set_title(f'Train Sample {i+1}')
-            nx.draw(train_nx, ax=axes[i, 0], node_size=50, node_color='#1f78b4', edge_color='gray')
+            pos_train = nx.spring_layout(train_nx, seed=42)
+            nx.draw(train_nx, pos=pos_train, ax=axes[i, 0], node_size=100, node_color='#1f78b4', edgecolors='black', edge_color='gray', width=1.5)
             
             axes[i, 1].set_title(f'Generated Sample {i+1}')
-            nx.draw(gen_nx, ax=axes[i, 1], node_size=50, node_color='#d62728', edge_color='gray')
+            pos_gen = nx.spring_layout(gen_nx, seed=42)
+            nx.draw(gen_nx, pos=pos_gen, ax=axes[i, 1], node_size=100, node_color='#d62728', edgecolors='black', edge_color='gray', width=1.5)
             
         plt.tight_layout()
         plt.savefig(sample_view)

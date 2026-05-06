@@ -18,26 +18,39 @@ project_root_dir = os.path.dirname(current_script_dir)
 sys.path.append(project_root_dir)
 
 
-def create_model(x_sample, args):
+def create_model(train_set, args):
     """
     Bootstrap definition dynamically registering requested networks wrapping around Graph DDPM.
 
     Args:
-        x_sample (torch_geometric.data.Data): Baseline graph extracting proper layout shapes.
+        train_set: The training dataset.
         args (argparse.Namespace): Execution command runtime hyperparameter arguments list.
     Returns:
         DDPM: Model instance equipped explicitly per specific layer requests.
     """
+    x_sample = train_set[0] if not isinstance(train_set[0], (list, tuple)) else train_set[0][0]
     node_feature_dim = x_sample.x.shape[1]
     edge_feature_dim = x_sample.edge_attr.shape[1] + 1
     global_feature_dim = 1
 
-    dummy_node_dist = torch.ones(node_feature_dim) / node_feature_dim
-    dummy_edge_dist = torch.ones(edge_feature_dim) / edge_feature_dim
+    node_counts = torch.zeros(node_feature_dim)
+    edge_counts = torch.zeros(edge_feature_dim)
+
+    for data in train_set:
+        data = data if not isinstance(data, (list, tuple)) else data[0]
+        n = data.num_nodes
+        if n > 0:
+            node_counts += data.x.sum(dim=0)
+            possible_edges = n * (n - 1)
+            edge_counts[1:] += data.edge_attr.sum(dim=0)
+            edge_counts[0] += (possible_edges - data.edge_attr.shape[0])
+
+    node_dist = node_counts / node_counts.sum()
+    edge_dist = edge_counts / edge_counts.sum()
 
     dataset_infos = DatasetInfos(
         node_feature_dim, edge_feature_dim, global_feature_dim,
-        dummy_node_dist, dummy_edge_dist
+        node_dist, edge_dist
     )
 
     network_type = args.network_type
@@ -104,8 +117,7 @@ if args.mode == 'train':
     if args.model_path and os.path.exists(args.model_path): # Check if model_path exists
         model = load_model(args.model_path, args.device)
     else :
-        x_sample = train_set[0] if not isinstance(train_set[0], (list, tuple)) else train_set[0][0]
-        model = create_model(x_sample, args).to(args.device)
+        model = create_model(train_set, args).to(args.device)
         
 
 
@@ -143,19 +155,46 @@ elif args.mode == 'sample':
             actual_adj = adj_matrix_batch[j, :n_nodes_tensor[j], :n_nodes_tensor[j]]
             all_generated_adj_matrices.append(actual_adj)
 
+    for idx, adj in enumerate(all_generated_adj_matrices):
+        print(f"\nGenerated Adjacency Matrix (sample {idx+1}) - shape : {adj.shape}")
+        print(adj)
     if args.sample_view:
-        from utils import plot_view
+        import networkx as nx
+        from torch_geometric.utils import to_networkx
+
         print(f"Saving sample visualization to {args.sample_view}...")
-        plot_view(train_set,all_generated_adj_matrices,args.sample_view)
-        
+        num_plot = min(len(all_generated_adj_matrices), 4)
+        if num_plot > 0:
+            fig, axes = plt.subplots(num_plot, 2, figsize=(10, 5 * num_plot))
+            axes = np.array(axes).reshape(num_plot, 2) # Ensure 2D format to avoid subscript errors
+            
+            for i in range(num_plot):
+                # Train set example (left column)
+                train_data = train_set[i] if not isinstance(train_set[i], (list, tuple)) else train_set[i][0]
+                train_nx = to_networkx(train_data, to_undirected=True)
+                
+                # Generated example (right column)
+                gen_adj = all_generated_adj_matrices[i].cpu().numpy()
+                gen_nx = nx.from_numpy_array(gen_adj)
+                
+                axes[i, 0].set_title(f'Train Sample {i+1}')
+                pos_train = nx.spring_layout(train_nx, seed=42)
+                nx.draw(train_nx, pos=pos_train, ax=axes[i, 0], node_size=100, node_color='#1f78b4', edgecolors='black', edge_color='gray', width=1.5)
+                
+                axes[i, 1].set_title(f'Generated Sample {i+1}')
+                pos_gen = nx.spring_layout(gen_nx, seed=42)
+                nx.draw(gen_nx, pos=pos_gen, ax=axes[i, 1], node_size=100, node_color='#d62728', edgecolors='black', edge_color='gray', width=1.5)
+                
+            plt.tight_layout()
+            plt.savefig(args.sample_view)
+            plt.close()
 
 elif args.mode == 'baseline':
     from baseline import generate_ER_baseline
     adj_matrices = generate_ER_baseline(all_n, r_map, num_graphs=args.num_sample)
-    if args.sample_view:
-        from utils import plot_view
-        print(f"Saving sample visualization to {args.sample_view}...")
-        plot_view(train_set,adj_matrices,args.sample_view)
+    for i in range(args.num_sample):  
+        print(f"Generated Adjacency Matrix (sample {i}) - shape : {adj_matrices[i].shape}")
+        print(adj_matrices[i])
 
 elif args.mode == 'stats':
     from baseline import generate_ER_baseline
@@ -213,8 +252,6 @@ elif args.mode == 'hyperparameter_search':
 
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
 
-    x_sample = train_set[0] if not isinstance(train_set[0], (list, tuple)) else train_set[0][0]
-
     print("Starting hyperparameter search...")
     for T, num_hidden, n_layers in itertools.product(T_values, num_hidden_values, n_layers_values):
         print(f"\n--- Testing HParams: T={T}, num_hidden={num_hidden}, n_layers={n_layers} ---")
@@ -224,7 +261,7 @@ elif args.mode == 'hyperparameter_search':
         current_args.num_hidden = num_hidden
         current_args.n_layers = n_layers
 
-        model = create_model(x_sample, current_args)
+        model = create_model(train_set, current_args)
         model.to(current_args.device)
 
         optimizer = torch.optim.Adam(model.parameters(), lr=current_args.lr)

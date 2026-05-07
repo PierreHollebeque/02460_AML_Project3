@@ -31,7 +31,7 @@ python main.py <mode> [OPTIONS]
 #### 1. Train the Model (`train`)
 Trains the DDPM model on the dataset. Saves the resulting model to `--model-path`.
 ```bash
-python main.py train --epochs 50 --batch-size 32 --lr 1e-3 --model-path model.pt
+python main.py train --epochs 20 --batch-size 32 --lr 1e-3 --model-path model.pt --device cuda
 ```
 - `--num-hidden`: Number of hidden units (default: 128).
 - `--n-layers`: Number of GraphTransformer layers (default: 4).
@@ -41,7 +41,7 @@ python main.py train --epochs 50 --batch-size 32 --lr 1e-3 --model-path model.pt
 Generates graphs using a pre-trained model and prints out the generated adjacency matrices.
 The `--sample-view` flag can be used to save a visual comparison of generated graphs and training set graphs.
 ```bash
-python main.py sample --num-sample 2
+python main.py sample --num-sample 2 --device cuda
 ```
 
 #### 3. Hyperparameter Search (`hyperparameter_search`)
@@ -60,7 +60,7 @@ python main.py baseline --num-sample 2
 #### 5. Compare & Compute Statistics (`stats`)
 Evaluates the model by generating graphs, generating baseline ER graphs, and evaluating them against the true training dataset for Uniqueness and Novelty.
 ```bash
-python main.py stats --model-path model.pt --num-sample 1000
+python main.py stats --model-path model.pt --num-sample 1000 --device cuda
 ```
 
 ### Common Options

@@ -46,14 +46,12 @@ class DDPM(nn.Module):
         self.limit_dist_E = dataset_infos.edge_dist.to(device)
 
 
+
         if schedule == 'linear':
-            self.beta = nn.Parameter(torch.linspace(beta_1, beta_T, T), requires_grad=False)
+            betas = diffusion_utils.custom_beta_schedule_discrete(T)
         elif schedule == 'cosine':
             betas = diffusion_utils.cosine_beta_schedule_discrete(T)
-            self.beta = nn.Parameter(torch.from_numpy(betas).float(), requires_grad=False)
-        else:
-            raise NotImplementedError(f"Schedule '{schedule}' not implemented.")
-
+        self.beta = nn.Parameter(torch.tensor(betas, dtype=torch.float32), requires_grad=False)
         self.alpha = nn.Parameter(1 - self.beta, requires_grad=False)
         self.alpha_cumprod = nn.Parameter(self.alpha.cumprod(dim=0), requires_grad=False)
 
@@ -249,16 +247,9 @@ class DDPM(nn.Module):
         X_t_onehot = F.one_hot(X_t, num_classes=self.Xdim).float()
         E_t_onehot = F.one_hot(E_t, num_classes=self.Edim).float()
 
-        # Normalize t to [0, 1] and prepare data for the network, consistent with sampling
-        t_norm = t.float() / self.T
-        noisy_data = {
-            'X_t': X_t_onehot, 
-            'E_t': E_t_onehot, 
-            'y_t': torch.zeros(bs, 0, device=X_0.device), # No global features in this model
-            't': t_norm.unsqueeze(-1)
-        }
-        extra_data = self.compute_extra_data(noisy_data)
-        pred = self.forward(noisy_data, extra_data, node_mask)
+        # Cast and normalize diffusion timestep for network input conditioning
+        t_norm = t.float().unsqueeze(-1) / self.T
+        pred = self.network(X_t_onehot, E_t_onehot, t_norm, node_mask)
         pred_X_logits, pred_E_logits = pred.X, pred.E
 
         # 5. Compute masked Cross-Entropy Loss

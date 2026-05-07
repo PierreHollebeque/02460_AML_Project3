@@ -50,7 +50,7 @@ def eigenvector_centrality(A):
     eigenvalues, eigenvectors = torch.linalg.eigh(A.to(torch.float32))
     return eigenvectors[:, torch.argmax(eigenvalues)].abs().cpu().numpy()
 
-def hashes(graphs, graph_type='adjacency_matrix'):
+def hashes(graphs, graph_type='adjacency_matrix', use_edge_attr=True):
     """
     Computes Weisfeiler-Lehman hashes for a list of graphs.
 
@@ -60,6 +60,7 @@ def hashes(graphs, graph_type='adjacency_matrix'):
                        If graph_type is 'adjacency_matrix', elements are torch.Tensor adjacency matrices.
         graph_type (str): Specifies the type of graph representation in the list.
                           Can be 'geometric' or 'adjacency_matrix'.
+        use_edge_attr (bool): Whether to use edge attributes when computing the hash.
     Returns:
         list: A list of WL hashes (strings).
     """
@@ -94,14 +95,15 @@ def hashes(graphs, graph_type='adjacency_matrix'):
         try:
             # Use edge attributes for hashing. nx.from_numpy_array stores them as 'weight'.
             # This is crucial for distinguishing graphs with different edge types.
-            h = nx.weisfeiler_lehman_graph_hash(g, iterations=10, edge_attr='weight')
+            edge_attr = 'weight' if use_edge_attr else None
+            h = nx.weisfeiler_lehman_graph_hash(g, iterations=10, edge_attr=edge_attr)
             wl_hashes.append(h)
         except Exception as e:
             print(f"Warning: Could not compute WL hash for a graph. Error: {e}")
     return wl_hashes
 
 
-def compare_graphs_generation(generated_graphs, baseline_graphs, train_set):
+def compare_graphs_generation(generated_graphs, baseline_graphs, train_set, use_edge_attr=True):
     """
     Compares generated and baseline graphs against the training set using WL hashes.
 
@@ -109,20 +111,21 @@ def compare_graphs_generation(generated_graphs, baseline_graphs, train_set):
         generated_graphs (list): List of generated adjacency matrices (torch.Tensor).
         baseline_graphs (list): List of baseline adjacency matrices (torch.Tensor).
         train_set (list): List of training graphs (torch_geometric.data.Data).
+        use_edge_attr (bool): Whether to use edge attributes for hash computation.
     """
     # Compute hashes for the training set
-    train_wl_hashes = hashes(train_set, graph_type='geometric')
+    train_wl_hashes = hashes(train_set, graph_type='geometric', use_edge_attr=use_edge_attr)
     train_set_hashes = set(train_wl_hashes)
 
     # Compute metrics for Generated Graphs
-    gen_wl_hashes = hashes(generated_graphs, graph_type='adjacency_matrix')
+    gen_wl_hashes = hashes(generated_graphs, graph_type='adjacency_matrix', use_edge_attr=use_edge_attr)
     gen_set = set(gen_wl_hashes)
     gen_novelty = sum(h not in train_set_hashes for h in gen_wl_hashes) / len(gen_wl_hashes) if len(gen_wl_hashes) > 0 else 0.0
     gen_uniqueness = len(gen_set) / len(gen_wl_hashes) if len(gen_wl_hashes) > 0 else 0.0
     gen_novel_and_unique = len(gen_set - train_set_hashes) / len(gen_wl_hashes) if len(gen_wl_hashes) > 0 else 0.0
 
     # Compute metrics for Baseline Graphs
-    baseline_wl_hashes = hashes(baseline_graphs, graph_type='adjacency_matrix')
+    baseline_wl_hashes = hashes(baseline_graphs, graph_type='adjacency_matrix', use_edge_attr=use_edge_attr)
     baseline_set = set(baseline_wl_hashes)
     baseline_novelty = sum(h not in train_set_hashes for h in baseline_wl_hashes) / len(baseline_wl_hashes) if len(baseline_wl_hashes) > 0 else 0.0
     baseline_uniqueness = len(baseline_set) / len(baseline_wl_hashes) if len(baseline_wl_hashes) > 0 else 0.0
@@ -261,7 +264,7 @@ if __name__ == '__main__':
     print(f"Generated {len(generated_adj_matrices)} dummy model graphs.")
 
     # Perform the comparison
-    compare_graphs_generation(generated_adj_matrices, baseline_adj_matrices, train_set)
+    compare_graphs_generation(generated_adj_matrices, baseline_adj_matrices, train_set, use_edge_attr=True)
 
     # Plot statistics
     plot_statistics(baseline_adj_matrices, generated_adj_matrices,train_set)

@@ -91,7 +91,7 @@ parser.add_argument('--num-sample', type=int, default=2, metavar='N', help='numb
 parser.add_argument('--batch-size', type=int, default=32, metavar='N', help='batch size for training and sampling (default: %(default)s)')
 
 parser.add_argument('--epochs', type=int, default=1, metavar='N', help='number of epochs to train (default: %(default)s)')
-parser.add_argument('--lr', type=float, default=1e-3, metavar='V', help='learning rate for training (default: %(default)s)')
+parser.add_argument('--lr', type=float, default=1e-4, metavar='V', help='learning rate for training (default: %(default)s)')
 
 parser.add_argument('--num-hidden', type=int, default=128, help='Number of hidden units (default: %(default)s)')
 parser.add_argument('--n-layers', type=int, default=4, help='Number of transformer layers (default: %(default)s)')
@@ -99,6 +99,8 @@ parser.add_argument('--network-type', type=str, default='GraphTransformer', choi
 parser.add_argument('--T', type=int, default=128, metavar='V', help='Number of steps in the diffusion process (default: %(default)s)')
 parser.add_argument('--schedule', type=str, default='cosine', choices=['linear', 'cosine'], help='Noise schedule for diffusion (default: %(default)s)')
 parser.add_argument('--lambda-E', type=float, default=2.0, help='Weight of the edge loss (default: %(default)s)')
+
+parser.add_argument('--ignore-edge-type', action='store_true', help='Ignore edge types when computing novelty and uniqueness (default: False)')
 
 parser.add_argument('--hparams-search-file', type=str, default='params.json', help='file containing all the hyperparameters combinations to search over (default: %(default)s)')
 
@@ -208,7 +210,7 @@ elif args.mode == 'stats':
             generated_adj_matrices.append(actual_adj)
 
     print("Computing stats...")
-    compare_graphs_generation(generated_adj_matrices, baseline_adj_matrices, train_set)
+    compare_graphs_generation(generated_adj_matrices, baseline_adj_matrices, train_set, use_edge_attr=not args.ignore_edge_type)
     print('Plot statistics')
     plot_statistics(baseline_adj_matrices, generated_adj_matrices,train_set)
 
@@ -228,7 +230,7 @@ elif args.mode == 'hyperparameter_search':
     all_loss_curves = []
 
     # Pre-compute train set hashes for novelty calculation
-    train_wl_hashes = hashes(train_set, graph_type='geometric')
+    train_wl_hashes = hashes(train_set, graph_type='geometric', use_edge_attr=not args.ignore_edge_type)
     train_set_hashes = set(train_wl_hashes)
 
     train_loader = DataLoader(train_set, batch_size=args.batch_size, shuffle=True)
@@ -248,7 +250,7 @@ elif args.mode == 'hyperparameter_search':
         optimizer = torch.optim.Adam(model.parameters(), lr=current_args.lr)
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
 
-        _,_  = train(model, optimizer, train_loader, current_args.epochs, current_args.device, scheduler=scheduler)
+        _,_  = train(model, optimizer, train_loader, current_args.epochs, current_args.device, scheduler)
         
         # --- Evaluation Step ---
         print("  > Generating samples for evaluation...")
@@ -268,7 +270,7 @@ elif args.mode == 'hyperparameter_search':
             generated_adj_matrices.append(actual_adj)
 
         # Calculate novelty and uniqueness
-        gen_wl_hashes = hashes(generated_adj_matrices, graph_type='adjacency_matrix')
+        gen_wl_hashes = hashes(generated_adj_matrices, graph_type='adjacency_matrix', use_edge_attr=not args.ignore_edge_type)
         gen_set = set(gen_wl_hashes)
         gen_novelty = sum(h not in train_set_hashes for h in gen_wl_hashes) / len(gen_wl_hashes) if len(gen_wl_hashes) > 0 else 0.0
         gen_uniqueness = len(gen_set) / len(gen_wl_hashes) if len(gen_wl_hashes) > 0 else 0.0

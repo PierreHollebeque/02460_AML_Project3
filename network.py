@@ -53,6 +53,8 @@ class GraphTransformer(ModelBase):
         self.mlp_in_y = nn.Sequential(nn.Linear(input_dims['y'], hidden_mlp_dims['y']), act_fn_in,
                                       nn.Linear(hidden_mlp_dims['y'], hidden_dims['dy']), act_fn_in)
 
+        self.degree_proj = nn.Linear(hidden_dims['de'], hidden_dims['dx'])
+
         self.tf_layers = nn.ModuleList([XEyTransformerLayer(dx=hidden_dims['dx'],
                                                             de=hidden_dims['de'],
                                                             dy=hidden_dims['dy'],
@@ -83,7 +85,14 @@ class GraphTransformer(ModelBase):
 
         new_E = self.mlp_in_E(E)
         new_E = (new_E + new_E.transpose(1, 2)) / 2
-        after_in = utils.PlaceHolder(X=self.mlp_in_X(X), E=new_E, y=self.mlp_in_y(y)).mask(node_mask)
+        
+        # 1. Encodage Structurel : On calcule l'embedding des degrés bruités pour l'injecter dans X
+        e_mask = (node_mask.unsqueeze(1) & node_mask.unsqueeze(2)).unsqueeze(-1)
+        new_E_masked = new_E * e_mask
+        noisy_degrees = new_E_masked.sum(dim=2) # Somme sur les voisins (bs, n, de)
+        new_X = self.mlp_in_X(X) + self.degree_proj(noisy_degrees)
+        
+        after_in = utils.PlaceHolder(X=new_X, E=new_E_masked, y=self.mlp_in_y(y)).mask(node_mask)
         X, E, y = after_in.X, after_in.E, after_in.y
 
         for layer in self.tf_layers:
@@ -248,7 +257,9 @@ class NodeEdgeBlock(nn.Module):
 
         # Compute unnormalized attentions. Y is (bs, n, n, n_head, df)
         Y = Q * K
-        Y = Y / math.sqrt(Y.size(-1))
+        # 2. Suppression de la division par sqrt(df). L'attention étant calculée 
+        # élément par élément et non sommée, diviser aplatissait l'attention 
+        # (rendant le graphe généré totalement aléatoire).
         diffusion_utils.assert_correctly_masked(Y, (e_mask1 * e_mask2).unsqueeze(-1))
 
         E1 = self.e_mul(E) * e_mask1 * e_mask2                        # bs, n, n, dx
@@ -296,8 +307,8 @@ class NodeEdgeBlock(nn.Module):
 
         # Process y based on X and E
         y = self.y_y(y)
-        e_y = self.e_y(E)
-        x_y = self.x_y(X)
+        e_y = self.e_y(E, node_mask)
+        x_y = self.x_y(X, node_mask)
         new_y = y + x_y + e_y
         new_y = self.y_out(new_y)               # bs, dy
 

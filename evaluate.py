@@ -162,16 +162,20 @@ def plot_statistics(baseline_adj_matrices, generated_adj_matrices,train_set):
     print("Calculating statistics for baseline graphs...")
     for adj in tqdm(baseline_adj_matrices, desc="Baseline stats"):
         if adj.shape[0] == 0: continue # Skip empty graphs
-        baseline_degrees.append(node_degree(adj).cpu().numpy())
-        baseline_ccs.append(clustering_coefficient(adj))
-        baseline_ecs.append(eigenvector_centrality(adj))
+        # Convert to binary adjacency matrix for consistent statistics
+        adj_binary = (adj > 0).int()
+        baseline_degrees.append(node_degree(adj_binary).cpu().numpy())
+        baseline_ccs.append(clustering_coefficient(adj_binary))
+        baseline_ecs.append(eigenvector_centrality(adj_binary))
 
     print("Calculating statistics for generated graphs...")
     for adj in tqdm(generated_adj_matrices, desc="Generated stats"):
         if adj.shape[0] == 0: continue # Skip empty graphs
-        gen_degrees.append(node_degree(adj).cpu().numpy())
-        gen_ccs.append(clustering_coefficient(adj))
-        gen_ecs.append(eigenvector_centrality(adj))
+        # Convert categorical adjacency matrix to binary for consistent statistics
+        adj_binary = (adj > 0).int()
+        gen_degrees.append(node_degree(adj_binary).cpu().numpy())
+        gen_ccs.append(clustering_coefficient(adj_binary))
+        gen_ecs.append(eigenvector_centrality(adj_binary))
 
     # Flatten lists of arrays into single 1D arrays
     train_degrees = np.concatenate(train_degrees) if train_degrees else np.array([])

@@ -46,9 +46,14 @@ class DDPM(nn.Module):
         self.limit_dist_E = dataset_infos.edge_dist.to(device)
 
 
+        if schedule == 'linear':
+            self.beta = nn.Parameter(torch.linspace(beta_1, beta_T, T), requires_grad=False)
+        elif schedule == 'cosine':
+            betas = diffusion_utils.cosine_beta_schedule_discrete(T)
+            self.beta = nn.Parameter(torch.from_numpy(betas).float(), requires_grad=False)
+        else:
+            raise NotImplementedError(f"Schedule '{schedule}' not implemented.")
 
-
-        self.beta = nn.Parameter(torch.linspace(beta_1, beta_T, T), requires_grad=False)
         self.alpha = nn.Parameter(1 - self.beta, requires_grad=False)
         self.alpha_cumprod = nn.Parameter(self.alpha.cumprod(dim=0), requires_grad=False)
 
